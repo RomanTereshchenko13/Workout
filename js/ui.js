@@ -137,18 +137,28 @@ export function select(value, options, onChange) {
   );
 }
 
+/**
+ * Segmented control. It moves its own highlight on click, so it works on
+ * screens that do not re-render — the onboarding form in particular.
+ */
 export function segmented(value, options, onChange) {
-  return h(
-    'div',
-    { class: 'segmented' },
-    options.map(([v, label]) =>
-      h(
-        'button',
-        { type: 'button', class: `seg ${v === value ? 'is-active' : ''}`, onclick: () => onChange(v) },
-        label,
-      ),
-    ),
+  let current = value;
+  const buttons = options.map(([v, label]) =>
+    h('button', {
+      type: 'button',
+      class: `seg ${v === current ? 'is-active' : ''}`,
+      onclick: () => {
+        if (v === current) return;
+        current = v;
+        buttons.forEach((b, i) => {
+          if (options[i][0] === current) b.classList.add('is-active');
+          else b.classList.remove('is-active');
+        });
+        onChange(v);
+      },
+    }, label),
   );
+  return h('div', { class: 'segmented' }, buttons);
 }
 
 export function stat(value, label, tone) {

@@ -1,4 +1,4 @@
-# Тренування дома — Home Workout PWA
+# Home Workout PWA
 
 An installable, offline-first workout app built around one specific set of equipment: **two adjustable dumbbells, 20 kg each**. The interface is entirely in Ukrainian; the code and docs are in English.
 

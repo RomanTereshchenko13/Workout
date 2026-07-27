@@ -3,7 +3,7 @@ import { get, startSession, logWeight, today, logCardio } from '../store.js';
 import { buildSession, dayByRotation, waveOf, CARDIO, WEEK_TEMPLATE } from '../data/program.js';
 import { describeLoad, shortLoad } from '../lib/plates.js';
 import { macroTargets, calorieTarget, changeOverDays, weightTrend, forecast, sessionKcal } from '../lib/nutrition.js';
-import { go } from '../app.js';
+import { go, isStandalone, canPromptInstall, promptInstall, isIOS } from '../app.js';
 
 export function homeView() {
   const d = get();
@@ -21,12 +21,64 @@ export function homeView() {
 
   return h('div', { class: 'view' },
     header(profile, logs),
+    installCard(),
     active ? activeBanner(active) : nextWorkoutCard(plan, wave),
     weightCard(d),
     todayTargets(macros, cal, profile),
     streakCard(logs),
     weekPlanCard(state),
     equipmentNote(inventory),
+  );
+}
+
+/**
+ * Shown only while the app runs in a browser tab. Chrome hides "Install app"
+ * in its ⋮ menu, so without this card the PWA reads as an ordinary website.
+ */
+function installCard() {
+  if (isStandalone()) return null;
+
+  if (canPromptInstall()) {
+    return card({ class: 'card-accent' },
+      h('div', { class: 'row-between' },
+        h('div', {},
+          h('div', { class: 'eyebrow' }, 'Встановлення'),
+          h('h3', {}, 'Додати на головний екран'),
+          h('p', { class: 'muted small' }, 'Свій значок, повний екран без адресного рядка, робота офлайн.'),
+        ),
+        btn('Встановити', {
+          variant: 'primary',
+          onClick: async () => {
+            const outcome = await promptInstall();
+            if (outcome === 'accepted') toast('Готово — шукай значок серед застосунків');
+            else if (outcome === 'dismissed') toast('Скасовано. Кнопка лишиться тут');
+            else toast('Браузер не пропонує встановлення — див. інструкцію', 'warn');
+          },
+        }),
+      ),
+    );
+  }
+
+  // No programmatic prompt: iOS Safari never offers one, and Chrome needs the menu.
+  return h('details', { class: 'card accordion' },
+    h('summary', {}, h('strong', {}, '📲 Встановити як застосунок'), h('span', { class: 'muted small' }, ' зараз працює як сайт')),
+    isIOS()
+      ? h('div', {},
+          h('p', { class: 'muted small' }, 'На iPhone встановлює лише Safari — у Chrome цієї можливості немає.'),
+          h('ol', { class: 'bullets' },
+            h('li', {}, 'Відкрий цю сторінку в Safari.'),
+            h('li', {}, 'Натисни «Поділитися» (квадрат зі стрілкою вгору).'),
+            h('li', {}, 'Обери «Додати на початковий екран» → «Додати».'),
+          ),
+        )
+      : h('div', {},
+          h('ol', { class: 'bullets' },
+            h('li', {}, 'Меню ⋮ у Chrome (три крапки вгорі справа).'),
+            h('li', {}, '«Встановити застосунок» або «Додати на головний екран».'),
+            h('li', {}, 'Підтвердь — значок з’явиться серед застосунків.'),
+          ),
+          h('p', { class: 'note' }, 'Якщо пункту немає: перезавантаж сторінку через кілька секунд — браузер має спершу зареєструвати офлайн-режим. Встановлення працює лише за https, не в режимі інкогніто.'),
+        ),
   );
 }
 

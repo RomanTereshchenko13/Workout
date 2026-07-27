@@ -96,7 +96,7 @@ function onboarding() {
   return h('div', { class: 'view onboarding' },
     h('div', { class: 'ob-hero' },
       h('div', { class: 'ob-logo' }, '🏋'),
-      h('h1', {}, 'Тренування дома'),
+      h('h1', {}, 'Home Workout'),
       h('p', { class: 'muted' }, 'Програма під дві набірні гантелі до 20 кг: сила, суха вага, схуднення. Усі дані — лише на цьому телефоні.'),
     ),
     card({},
@@ -139,6 +139,71 @@ function onboarding() {
       h('p', { class: 'note' }, 'Це не медична порада. За хронічних проблем зі спиною, серцем чи тиском спершу порадься з лікарем.'),
     ),
   );
+}
+
+/* ─────────────── Installation ─────────────── */
+
+/**
+ * Chrome fires `beforeinstallprompt` when the app qualifies for installation and
+ * then hides the prompt behind its ⋮ menu. Capturing the event lets the app show
+ * a real button instead, which is the difference between "this is a website" and
+ * "this is an app" for anyone who does not go hunting through browser menus.
+ */
+let installEvent = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installEvent = e;
+  window.dispatchEvent(new CustomEvent('app:render'));
+});
+
+window.addEventListener('appinstalled', () => {
+  installEvent = null;
+  window.dispatchEvent(new CustomEvent('app:render'));
+});
+
+/** True once the app runs from the home screen rather than a browser tab. */
+export function isStandalone() {
+  return (
+    window.matchMedia?.('(display-mode: standalone)')?.matches === true ||
+    window.matchMedia?.('(display-mode: fullscreen)')?.matches === true ||
+    navigator.standalone === true
+  );
+}
+
+/** Whether the browser has offered us a programmatic install prompt. */
+export function canPromptInstall() {
+  return installEvent !== null;
+}
+
+/** iOS never fires beforeinstallprompt — it needs the Share-menu instructions. */
+export function isIOS() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+export async function promptInstall() {
+  if (!installEvent) return 'unavailable';
+  installEvent.prompt();
+  const { outcome } = await installEvent.userChoice;
+  installEvent = null;
+  window.dispatchEvent(new CustomEvent('app:render'));
+  return outcome; // 'accepted' | 'dismissed'
+}
+
+/** Diagnostics for the profile screen — answers "why can't I install this?". */
+export async function installDiagnostics() {
+  const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+  return {
+    standalone: isStandalone(),
+    secure: window.isSecureContext === true,
+    serviceWorker: 'serviceWorker' in navigator,
+    serviceWorkerActive: !!reg?.active,
+    manifest: !!document.querySelector('link[rel="manifest"]'),
+    promptReady: canPromptInstall(),
+    ios: isIOS(),
+    version: APP_VERSION,
+  };
 }
 
 /* ─────────────── Updates (GitHub Pages) ─────────────── */

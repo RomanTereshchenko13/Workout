@@ -29,7 +29,12 @@ function makeElement(tag, ns) {
       add(...c) { c.forEach((x) => this._set.add(x)); },
       remove(...c) { c.forEach((x) => this._set.delete(x)); },
       contains(c) { return this._set.has(c); },
-      toggle(c) { this._set.has(c) ? this._set.delete(c) : this._set.add(c); },
+      toggle(c, force) {
+        const on = force === undefined ? !this._set.has(c) : !!force;
+        on ? this._set.add(c) : this._set.delete(c);
+        return on;
+      },
+      get value() { return [...this._set].join(' '); },
     },
     appendChild(child) { this.children.push(child); child.parentNode = this; return child; },
     removeChild(child) { this.children = this.children.filter((c) => c !== child); return child; },
@@ -49,6 +54,16 @@ function makeElement(tag, ns) {
     get innerHTML() { return ''; },
     set innerHTML(v) { this.children = [makeText(String(v).replace(/<[^>]*>/g, ''))]; },
   };
+  // In a real DOM, className and classList are two views of the same value.
+  // Keeping them in sync is what lets tests assert on classes set at build time.
+  Object.defineProperty(el, 'className', {
+    get() { return [...el.classList._set].join(' '); },
+    set(v) {
+      el.classList._set = new Set(String(v).split(/\s+/).filter(Boolean));
+    },
+    enumerable: true,
+    configurable: true,
+  });
   return el;
 }
 
@@ -243,6 +258,30 @@ const next = buildSession({
 });
 const progressed = next.exercises.filter((e) => e.suggested.progressed);
 ok(progressed.length > 0, 'after hitting every target, the next session raises weights', `${progressed.length} exercises stepped up`);
+
+// ── Interactive controls ──
+// Regression guard: the segmented control used to paint its highlight once and
+// never move it, which made the onboarding form look like the experience level
+// could not be changed away from "Новачок".
+console.log('\nInteractive controls');
+const { segmented } = await import('../js/ui.js');
+let picked = null;
+const seg = segmented('beginner', [['beginner', 'Новачок'], ['inter', 'Середній'], ['adv', 'Досвід']], (v) => { picked = v; });
+const segs = seg.children;
+ok(segs.length === 3, 'segmented renders one button per option');
+ok(segs[0].classList.contains('is-active'), 'segmented starts on the supplied value');
+
+segs[2].click();
+ok(picked === 'adv', 'clicking a segment reports the new value to the caller');
+ok(segs[2].classList.contains('is-active'), 'the clicked segment becomes active');
+ok(!segs[0].classList.contains('is-active'), 'the previously active segment is cleared');
+
+segs[1].click();
+ok(picked === 'inter' && segs[1].classList.contains('is-active') && !segs[2].classList.contains('is-active'), 'the highlight keeps following further clicks');
+
+picked = null;
+segs[1].click();
+ok(picked === null, 're-clicking the active segment does not fire a redundant change');
 
 // ── Persistence round-trip ──
 console.log('\nPersistence');

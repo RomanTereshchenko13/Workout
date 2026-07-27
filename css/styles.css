@@ -415,7 +415,24 @@ textarea.input { resize: vertical; }
 
 .hist-card { border-left: 3px solid var(--day-color); }
 .hist-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 0.76rem; color: var(--muted); margin: 8px 0; font-variant-numeric: tabular-nums; }
+.hist-actions { display: flex; gap: 2px; flex: 0 0 auto; }
 .tag-hot { color: var(--warn); }
+
+/* Editing a finished workout */
+.edit-list { display: flex; flex-direction: column; gap: 10px; max-height: 46vh; overflow-y: auto; margin: 10px 0 14px; }
+.edit-ex { background: var(--bg-2); border-radius: var(--radius-sm); padding: 10px 12px; }
+.edit-ex-name { font-size: 0.88rem; margin-bottom: 8px; }
+.edit-sets { display: flex; flex-direction: column; gap: 6px; }
+.edit-set { display: flex; align-items: center; gap: 8px; }
+.edit-set-field { flex: 1; display: flex; align-items: center; gap: 6px; }
+.edit-set-field .input { padding: 8px 10px; text-align: center; font-variant-numeric: tabular-nums; }
+.edit-set-unit { font-size: 0.72rem; color: var(--muted); min-width: 30px; }
+.set-toggle {
+  width: 38px; height: 38px; flex: 0 0 38px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  font-size: 0.85rem; font-weight: 700; font-family: inherit; cursor: pointer;
+}
+.set-toggle.is-done { background: rgba(61,220,132,0.16); border-color: rgba(61,220,132,0.5); color: var(--good); }
 
 /* ─────────── Tab bar ─────────── */
 
@@ -434,6 +451,10 @@ textarea.input { resize: vertical; }
 .tab-label { font-size: 0.62rem; }
 .tab-session { color: var(--good); animation: pulse 2s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+/* Counting down a rest that is still running after you left the session screen.
+   Steady, not pulsing: the digits are already changing once a second. */
+.tab-session.is-resting { color: var(--accent); animation: none; }
+.tab-session.is-resting .tab-label { font-size: 0.72rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* ─────────── Sheets & toasts ─────────── */
 

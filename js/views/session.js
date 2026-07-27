@@ -173,6 +173,9 @@ function teardown() {
   stopClock();
   hideRest({ keepSaved: true });
   refs = null;
+  // Held across sessions otherwise, keeping a detached card alive and letting a
+  // stale replaceNode target survive into the next workout.
+  finisherNode = null;
 }
 
 /* ─────────────── Static blocks ─────────────── */
@@ -389,6 +392,10 @@ function swapSheet(e, exIndex) {
       ex.id = picked;
       ex.name = meta.name;
       ex.mode = meta.mode;
+      // A different movement counts its reps differently. Leaving the old flag
+      // in place is what made a two-arm row report double its real tonnage.
+      ex.perSide = meta.perSide === true;
+      ex.baseKg = sug.baseKg ?? null;
       ex.sets.forEach((s) => {
         if (!s.done) s.kg = sug.kg;
       });

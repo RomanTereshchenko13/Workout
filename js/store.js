@@ -3,11 +3,11 @@
  * Data survives app updates; JSON export/import covers device migration.
  */
 
-import { DEFAULT_INVENTORY } from './lib/plates.js';
+import { DEFAULT_INVENTORY, normalizeInventory } from './lib/plates.js';
 import { isoDate, daysBetween } from './lib/dates.js';
 
 const KEY = 'workout.v1';
-const SCHEMA = 4;
+const SCHEMA = 5;
 
 const DEFAULTS = () => ({
   v: SCHEMA,
@@ -75,7 +75,9 @@ function migrate(parsed) {
     ...base,
     ...parsed,
     profile: { ...base.profile, ...(parsed.profile || {}) },
-    inventory: { ...base.inventory, ...(parsed.inventory || {}) },
+    // Normalised, not merged: a bar heavier than the per-dumbbell cap makes the
+    // weight ladder empty, and every screen plans a session against that ladder.
+    inventory: normalizeInventory({ ...base.inventory, ...(parsed.inventory || {}) }),
     settings: { ...base.settings, ...(parsed.settings || {}) },
     state: { ...base.state, ...(parsed.state || {}) },
     substitutions: { ...(parsed.substitutions || {}) },
@@ -101,6 +103,14 @@ function migrate(parsed) {
     merged.active.finisherRounds ??= merged.active.finisherDone ? 1 : 0;
     merged.active.rest ??= null;
   }
+
+  // v5 adds `baseKg` — the working weight before the wave's deload scaling — to
+  // logged exercises. Nothing to rewrite: history recorded before this has the
+  // scaled figure only, and program.js reconstructs the working weight from it.
+
+  // v5 also moved `perSide` from the program slot onto the exercise. Logs are
+  // untouched on purpose: they record what was actually performed, and rewriting
+  // them would change the tonnage of workouts that were done per side.
 
   merged.meta.nextLogSeq = Math.max(
     Number(merged.meta.nextLogSeq) || 1,
@@ -214,7 +224,7 @@ export function saveProfile(patch) {
 
 export function saveInventory(inv) {
   return update((d) => {
-    d.inventory = inv;
+    d.inventory = normalizeInventory(inv);
   });
 }
 
@@ -284,6 +294,9 @@ export function startSession(plan) {
         mode: e.mode,
         isTime: e.isTime,
         perSide: !!e.perSide,
+        // The working weight before the wave's deload scaling. Carried into
+        // history so next week can tell "deliberately light" from "regressed".
+        baseKg: e.suggested?.baseKg ?? null,
         ss: e.ss ?? null,
         target: { sets: e.sets, low: e.reps.low, high: e.reps.high },
         rest: e.rest,
@@ -350,6 +363,7 @@ export function finishSession() {
         mode: e.mode,
         isTime: e.isTime,
         perSide: !!e.perSide,
+        baseKg: e.baseKg ?? null,
         sets: e.sets.map((s) => ({ kg: s.kg, reps: s.reps, done: !!s.done })),
       })),
     });
@@ -363,6 +377,20 @@ export function finishSession() {
 export function deleteLog(id) {
   return update((d) => {
     d.logs = d.logs.filter((l) => l.id !== id);
+  });
+}
+
+/**
+ * Edit a finished workout in place.
+ *
+ * A mistyped set used to be unfixable: the only tool was deleting the whole
+ * session, which also threw away the history that drives the next session's
+ * weights. Editing feeds straight back into progression, which is the point.
+ */
+export function updateLog(id, mutator) {
+  return update((d) => {
+    const log = d.logs.find((l) => l.id === id);
+    if (log) mutator(log);
   });
 }
 

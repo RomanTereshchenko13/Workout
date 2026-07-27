@@ -45,9 +45,9 @@ export function calorieTarget(profile) {
 
 /** Protein 1.8–2.2 g/kg: the high end preserves muscle in a deficit and blunts hunger. */
 export function macroTargets(profile) {
-  const { kcal } = calorieTarget(profile);
+  const { kcal, mode } = calorieTarget(profile);
   const refWeight = Math.max(profile.goalWeightKg || profile.weightKg, profile.weightKg * 0.85);
-  const proteinG = Math.round(refWeight * (calorieTarget(profile).mode === 'cut' ? 2.0 : 1.7));
+  const proteinG = Math.round(refWeight * (mode === 'cut' ? 2.0 : 1.7));
   const fatG = Math.round((kcal * 0.27) / 9);
   const carbsG = Math.max(50, Math.round((kcal - proteinG * 4 - fatG * 9) / 4));
   return { kcal, proteinG, fatG, carbsG, waterMl: Math.round(profile.weightKg * 33) };

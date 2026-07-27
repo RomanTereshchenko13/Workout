@@ -7,6 +7,10 @@
  *        'plate'  — a single plate held or worn
  * group: legs | push | pull | core | full
  * start: rough starting weight per dumbbell (kg) by experience; null = bodyweight
+ * perSide: reps (or seconds) are counted per limb, so the set is performed twice.
+ *        This lives on the exercise, not on the program slot: it is a property of
+ *        the movement, and a slot-level flag survived substitutions — swapping a
+ *        one-arm row for a two-arm row kept "per side" set and doubled its tonnage.
  *
  * All user-facing strings stay Ukrainian — this is the app's content, not code.
  */
@@ -63,6 +67,7 @@ export const EXERCISES = {
     mode: 'pair',
     muscles: 'Квадрицепси, сідниці, стабілізатори',
     start: { beginner: 4, inter: 8, adv: 12 },
+    perSide: true,
     cues: [
       'Задня нога на стільці/дивані, ~70 см від опори.',
       'Вага на передній нозі, коліно над стопою.',
@@ -75,6 +80,7 @@ export const EXERCISES = {
     mode: 'pair',
     muscles: 'Сідниці, квадрицепси',
     start: { beginner: 4, inter: 8, adv: 12 },
+    perSide: true,
     cues: ['Крок назад, коліно майже торкається підлоги.', 'Корпус вертикально, живіт напружений.'],
   },
   'walking-lunge': {
@@ -83,6 +89,7 @@ export const EXERCISES = {
     mode: 'pair',
     muscles: 'Сідниці, квадрицепси',
     start: { beginner: 4, inter: 6, adv: 10 },
+    perSide: true,
     cues: ['Довгий крок, коліно задньої ноги вниз.', 'Рахуй повторення на кожну ногу.'],
   },
   'step-up': {
@@ -91,6 +98,7 @@ export const EXERCISES = {
     mode: 'pair',
     muscles: 'Сідниці, квадрицепси',
     start: { beginner: 4, inter: 8, adv: 12 },
+    perSide: true,
     cues: ['Опора 35–45 см (стілець/лавка).', 'Виштовхуйся верхньою ногою, не допомагай нижньою.'],
   },
   'hip-thrust': {
@@ -111,6 +119,7 @@ export const EXERCISES = {
     mode: 'single',
     muscles: 'Задня поверхня стегна, сідниці, баланс',
     start: { beginner: 6, inter: 10, adv: 14 },
+    perSide: true,
     cues: ['Гантель у руці з боку робочої ноги.', 'Таз не «розкривається», плечі паралельно підлозі.'],
   },
   'calf-raise': {
@@ -278,6 +287,7 @@ export const EXERCISES = {
     mode: 'single',
     muscles: 'Найширші, ромбовидні, біцепс',
     start: { beginner: 10, inter: 16, adv: 20 },
+    perSide: true,
     cues: ['Упор рукою в диван, спина паралельно підлозі.', 'Тягни до пояса, лікоть вздовж тіла.'],
   },
   'renegade-row': {
@@ -286,6 +296,7 @@ export const EXERCISES = {
     mode: 'pair',
     muscles: 'Спина, кор, плечі',
     start: { beginner: 6, inter: 10, adv: 14 },
+    perSide: true,
     cues: ['Упор на гантелі, ноги ширше для стабільності.', 'Таз не крутиться — це головне.'],
   },
   'gorilla-row': {
@@ -294,6 +305,7 @@ export const EXERCISES = {
     mode: 'pair',
     muscles: 'Спина, біцепс',
     start: { beginner: 10, inter: 14, adv: 18 },
+    perSide: true,
     cues: ['Гантелі на підлозі між стопами, нахил як у сумо.', 'Тягни поперемінно, друга гантель — опора.'],
   },
   'high-pull': {
@@ -342,6 +354,7 @@ export const EXERCISES = {
     mode: 'single',
     muscles: 'Біцепс (пік)',
     start: { beginner: 6, inter: 10, adv: 14 },
+    perSide: true,
     cues: ['Сидячи, лікоть в упорі на внутрішній стороні стегна.', 'Максимальне скорочення вгорі.'],
   },
 
@@ -360,6 +373,7 @@ export const EXERCISES = {
     mode: 'bw',
     muscles: 'Косі м’язи',
     start: null,
+    perSide: true,
     cues: ['Тіло пряме, таз високо.', 'Час на кожну сторону.'],
   },
   'suitcase-carry': {
@@ -368,6 +382,7 @@ export const EXERCISES = {
     mode: 'single',
     muscles: 'Косі, кор, хват',
     start: { beginner: 12, inter: 16, adv: 20 },
+    perSide: true,
     cues: ['Гантель в одній руці, корпус не хилиться.', 'Час або кроки на кожну сторону.'],
   },
   'farmer-walk': {
@@ -384,6 +399,7 @@ export const EXERCISES = {
     mode: 'single',
     muscles: 'Косі м’язи',
     start: { beginner: 4, inter: 8, adv: 10 },
+    perSide: true,
     cues: ['Сидячи, корпус відкинутий назад ~45°.', 'Оберт від грудей, не тільки руками.'],
   },
   'dead-bug': {
@@ -416,6 +432,7 @@ export const EXERCISES = {
     mode: 'single',
     muscles: 'Косі м’язи',
     start: { beginner: 10, inter: 14, adv: 20 },
+    perSide: true,
     cues: ['Гантель в одній руці, нахил строго в площині.', 'Без обертання корпусу.'],
   },
   windmill: {
@@ -424,6 +441,7 @@ export const EXERCISES = {
     mode: 'single',
     muscles: 'Косі, плечі, гнучкість',
     start: { beginner: 4, inter: 8, adv: 12 },
+    perSide: true,
     cues: ['Гантель вгорі на прямій руці, погляд на неї.', 'Тягнись вільною рукою до стопи.'],
   },
 

@@ -27,6 +27,37 @@ function perSideLimit(count, mode) {
   return Math.floor(count / (mode === 'pair' ? 4 : 2));
 }
 
+function positive(value, fallback, min = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= min && n > 0 ? n : fallback;
+}
+
+/**
+ * Coerce an inventory into something the plate math can survive.
+ *
+ * Every screen plans a session, every plan calls into the ladder, and the ladder
+ * used to come back empty for a configuration where even the bare bar exceeded
+ * the per-dumbbell cap. `nearestLoad` then reduced over an empty array and threw
+ * — from every screen at once, on every launch, with the bad value already
+ * persisted. There was no way out of that from inside the app.
+ */
+export function normalizeInventory(raw = {}) {
+  const barKg = positive(raw.barKg, DEFAULT_INVENTORY.barKg);
+  const plates = {};
+  for (const [denom, count] of Object.entries(raw.plates || {})) {
+    const d = Number(denom);
+    const n = Math.floor(Number(count));
+    if (Number.isFinite(d) && d > 0 && Number.isFinite(n) && n > 0) plates[d] = Math.min(n, 99);
+  }
+  return {
+    barKg,
+    plates,
+    // The cap has to leave room for the bar itself, or there is nothing to lift.
+    maxPerDumbbellKg: Math.max(barKg, positive(raw.maxPerDumbbellKg, DEFAULT_INVENTORY.maxPerDumbbellKg)),
+    maxPlatesPerSide: Math.max(1, Math.floor(positive(raw.maxPlatesPerSide, DEFAULT_INVENTORY.maxPlatesPerSide))),
+  };
+}
+
 /**
  * Every weight a single dumbbell can be loaded to in the given mode.
  * @returns {Array<{kg:number, side:Object<string,number>, plates:number}>} sorted by weight
@@ -63,6 +94,13 @@ export function achievableLoads(inventory = DEFAULT_INVENTORY, mode = 'pair') {
   };
 
   walk(0, {}, 0, 0);
+  // A ladder is never empty: the bare bar is always liftable. Every caller here
+  // reduces or indexes over this list, so returning [] threw rather than
+  // degrading — see normalizeInventory for how such a config used to arise.
+  if (!best.size) {
+    const kg = round(Number(inventory.barKg) || DEFAULT_INVENTORY.barKg);
+    best.set(kg, { kg, side: {}, plates: 0 });
+  }
   return [...best.values()].sort((a, b) => a.kg - b.kg);
 }
 

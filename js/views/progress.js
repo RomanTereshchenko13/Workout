@@ -1,10 +1,10 @@
-import { h, card, btn, stat, kg, weightChart, barChart, fmtDate, fmtDateFull, relDay, fmtDuration, sheet, plural, confirmSheet, toast, segmented, accordion } from '../ui.js';
-import { get, deleteLog, deleteWeight } from '../store.js';
+import { h, card, btn, stat, kg, weightChart, barChart, fmtDate, fmtDateFull, relDay, fmtDuration, sheet, plural, confirmSheet, toast, segmented, accordion, num, field } from '../ui.js';
+import { get, deleteLog, deleteWeight, updateLog } from '../store.js';
 import { EXERCISES } from '../data/exercises.js';
 import { dayByKey } from '../data/program.js';
 import { weightTrend, changeOverDays, e1rm, forecast } from '../lib/nutrition.js';
 import { liftedPerRep, totalVolume } from '../lib/plates.js';
-import { daysAgoISO, mondayOfISO } from '../lib/dates.js';
+import { daysAgoISO, mondayOfISO, addDaysISO } from '../lib/dates.js';
 import { weighSheet } from './home.js';
 
 let tab = 'weight';
@@ -15,7 +15,7 @@ export function progressView() {
     h('div', { class: 'page-head' }, h('div', {}, h('div', { class: 'eyebrow' }, 'Аналітика'), h('h1', {}, 'Прогрес'))),
     segmented(tab, [['weight', 'Вага'], ['strength', 'Сила'], ['history', 'Історія']], (v) => {
       tab = v;
-      window.dispatchEvent(new CustomEvent('app:render'));
+      rerender();
     }),
     tab === 'weight' ? weightTab(d) : tab === 'strength' ? strengthTab(d) : historyTab(d),
   );
@@ -160,14 +160,30 @@ function buildRecords(logs) {
   return [...map.values()].sort((a, b) => b.e1rm - a.e1rm);
 }
 
-function weeklyVolume(logs) {
+/**
+ * Weekly tonnage, in tonnes, for the last 8 calendar weeks that have any history.
+ *
+ * Weeks with no training still occupy a slot. Skipping them packed the bars
+ * together, so a three-week break rendered as three adjacent bars — the chart
+ * said "steady" about exactly the period where nothing happened.
+ *
+ * Exported for the test suite.
+ */
+export function weeklyVolume(logs) {
   const buckets = new Map();
   for (const log of logs) {
     const key = mondayOfISO(log.date);
     buckets.set(key, (buckets.get(key) || 0) + totalVolume(log.exercises || []));
   }
-  const arr = [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-8);
-  return arr.map(([d, v], i, all) => ({
+  if (!buckets.size) return [];
+
+  const weeks = [...buckets.keys()].sort();
+  const filled = [];
+  for (let d = weeks[0]; d <= weeks[weeks.length - 1]; d = addDaysISO(d, 7)) {
+    filled.push([d, buckets.get(d) || 0]);
+  }
+
+  return filled.slice(-8).map(([d, v], i, all) => ({
     label: fmtDate(d).split(' ')[0],
     value: Math.round(v / 1000 * 10) / 10,
     highlight: i === all.length - 1,
@@ -191,6 +207,96 @@ function exerciseHistorySheet(rec, logs) {
 
 /* ─────────────── History ─────────────── */
 
+/**
+ * Edit a finished workout: reps, weight, which sets counted, duration and note.
+ *
+ * Until this existed a single mistyped set could only be fixed by deleting the
+ * whole session — which also deleted the history that decides the next
+ * session's weights, so the fix cost more than the mistake.
+ *
+ * Exported for the test suite; the UI reaches it through the ✎ button.
+ */
+export function editLogSheet(log) {
+  const day = dayByKey(log.dayKey);
+  const rows = [];
+
+  const durationInput = num(Math.round((log.durationSec || 0) / 60), { step: 1, min: 0 });
+  const noteInput = h('textarea', { class: 'input', rows: 2, value: log.note || '', placeholder: 'Самопочуття, сон, що болить...' });
+
+  const exerciseBlocks = (log.exercises || []).map((e, ei) => {
+    const meta = EXERCISES[e.id];
+    const isBw = (meta?.mode || e.mode) === 'bw';
+    const unit = e.isTime ? 'с' : 'повт.';
+
+    const setRows = (e.sets || []).map((s, si) => {
+      const repsInput = num(s.reps, { step: 1, min: 0 });
+      const kgInput = isBw ? null : num(s.kg, { step: 0.5, min: 0 });
+      let done = !!s.done;
+
+      const toggle = h('button', {
+        class: `set-toggle ${done ? 'is-done' : ''}`,
+        'aria-pressed': done ? 'true' : 'false',
+        'aria-label': `Підхід ${si + 1} зараховано`,
+        onclick: () => {
+          done = !done;
+          toggle.classList.toggle('is-done', done);
+          toggle.setAttribute('aria-pressed', done ? 'true' : 'false');
+        },
+      }, `${si + 1}`);
+
+      rows.push({ ei, si, repsInput, kgInput, isDone: () => done });
+
+      return h('div', { class: 'edit-set' },
+        toggle,
+        h('div', { class: 'edit-set-field' }, h('span', { class: 'edit-set-unit' }, unit), repsInput),
+        kgInput ? h('div', { class: 'edit-set-field' }, h('span', { class: 'edit-set-unit' }, 'кг'), kgInput) : null,
+      );
+    });
+
+    return h('div', { class: 'edit-ex' },
+      h('div', { class: 'edit-ex-name' },
+        h('strong', {}, meta?.name || e.id),
+        e.perSide ? h('span', { class: 'muted small' }, ' · на сторону') : null,
+      ),
+      h('div', { class: 'edit-sets' }, setRows),
+    );
+  });
+
+  sheet('Редагувати тренування', h('div', {},
+    h('p', { class: 'muted small' }, `${fmtDateFull(log.date)} · ${day.title}`),
+    h('div', { class: 'edit-list' }, exerciseBlocks),
+    h('div', { class: 'sheet-grid' }, field('Тривалість, хв', durationInput)),
+    field('Нотатка', noteInput),
+    h('p', { class: 'note' }, 'Номер підходу — перемикач «зараховано». Зміни впливають на тоннаж, рекорди й ваги, які програма запропонує далі.'),
+  ), [
+    { label: 'Скасувати', variant: 'ghost' },
+    {
+      label: 'Зберегти',
+      variant: 'primary',
+      onClick: () => {
+        updateLog(log.id, (l) => {
+          for (const r of rows) {
+            const set = l.exercises?.[r.ei]?.sets?.[r.si];
+            if (!set) continue;
+            set.reps = Math.max(0, parseFloat(r.repsInput.value) || 0);
+            if (r.kgInput) set.kg = Math.max(0, parseFloat(r.kgInput.value) || 0);
+            set.done = r.isDone();
+          }
+          const mins = parseFloat(durationInput.value);
+          if (Number.isFinite(mins) && mins >= 0) l.durationSec = Math.round(mins * 60);
+          l.note = noteInput.value.trim();
+        });
+        toast('Збережено');
+        rerender();
+      },
+    },
+  ]);
+}
+
+function rerender() {
+  window.dispatchEvent(new CustomEvent('app:render'));
+}
+
 function historyTab(d) {
   const { logs } = d;
   if (!logs.length) return card({}, h('p', { class: 'muted' }, 'Історія порожня.'));
@@ -205,11 +311,18 @@ function historyTab(d) {
             h('div', { class: 'eyebrow' }, `${fmtDateFull(log.date)} · тиждень ${log.week}`),
             h('h3', {}, day.title),
           ),
-          h('button', {
-            class: 'link-btn',
-            'aria-label': `Видалити тренування ${fmtDate(log.date)}`,
-            onclick: () => confirmSheet('Видалити запис?', `${day.title}, ${fmtDate(log.date)}`, () => { deleteLog(log.id); toast('Видалено'); }, 'Видалити'),
-          }, '✕'),
+          h('div', { class: 'hist-actions' },
+            h('button', {
+              class: 'link-btn',
+              'aria-label': `Редагувати тренування ${fmtDate(log.date)}`,
+              onclick: () => editLogSheet(log),
+            }, '✎'),
+            h('button', {
+              class: 'link-btn',
+              'aria-label': `Видалити тренування ${fmtDate(log.date)}`,
+              onclick: () => confirmSheet('Видалити запис?', `${day.title}, ${fmtDate(log.date)}`, () => { deleteLog(log.id); toast('Видалено'); }, 'Видалити'),
+            }, '✕'),
+          ),
         ),
         h('div', { class: 'hist-meta' },
           h('span', {}, `${done} підходів`),

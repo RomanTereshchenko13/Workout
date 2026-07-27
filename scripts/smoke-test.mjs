@@ -10,7 +10,7 @@
 
 import {
   achievableLoads, nearestLoad, nextLoadUp, nextLoadDown, maxLoad,
-  describeLoad, fitsInventory, plateUsage, DEFAULT_INVENTORY,
+  describeLoad, fitsInventory, plateUsage, DEFAULT_INVENTORY, normalizeInventory,
   setVolume, exerciseVolume, totalVolume,
 } from '../js/lib/plates.js';
 import { EXERCISES, WARMUP, COOLDOWN, GROUPS } from '../js/data/exercises.js';
@@ -72,6 +72,49 @@ group('Plate math (bar 2 kg, 4×2 + 4×3 + 4×4 kg, cap 20 kg/dumbbell)', () => 
   const bigger = { barKg: 2, plates: { 1: 4, 2: 4, 3: 4, 4: 4 }, maxPerDumbbellKg: 24, maxPlatesPerSide: 4 };
   const wider = achievableLoads(bigger, 'pair').map((l) => l.kg);
   ok(wider.includes(4) && wider.includes(18), 'adding 1 kg plates fills the 4 and 18 kg gaps', wider.join(','));
+});
+
+/* ─────────── Degenerate inventories ─────────── */
+
+group('Inventory guards', () => {
+  // The configuration that used to brick the app: a bar heavier than the
+  // per-dumbbell cap made the ladder empty, so nearestLoad reduced over [] and
+  // threw. Every screen plans a session, so every screen threw — on every
+  // launch, with the bad value already in localStorage and no way back.
+  const inverted = { barKg: 5, plates: { 2: 4 }, maxPerDumbbellKg: 2, maxPlatesPerSide: 3 };
+  ok(achievableLoads(inverted, 'pair').length >= 1, 'an inverted cap still yields a ladder');
+  let threw = false;
+  try {
+    nearestLoad(10, inverted, 'pair');
+    maxLoad(inverted, 'pair');
+    nextLoadUp(4, inverted, 'pair');
+  } catch { threw = true; }
+  ok(!threw, 'the plate helpers do not throw on an inverted cap');
+
+  const fixed = normalizeInventory(inverted);
+  ok(fixed.maxPerDumbbellKg >= fixed.barKg, 'normalize lifts the cap to at least the bar weight', JSON.stringify(fixed));
+
+  // Anything a number input can produce, including things it should not.
+  const junk = [
+    {}, null, undefined,
+    { barKg: 0, plates: {}, maxPerDumbbellKg: 0, maxPlatesPerSide: 0 },
+    { barKg: -3, plates: { '-2': 5, 0: 9, abc: 3 }, maxPerDumbbellKg: NaN, maxPlatesPerSide: -1 },
+    { barKg: '2', plates: { 4: '4' }, maxPerDumbbellKg: '20', maxPlatesPerSide: '3' },
+  ];
+  for (const raw of junk) {
+    const inv = normalizeInventory(raw ?? undefined);
+    ok(inv.barKg > 0, `normalize(${JSON.stringify(raw)}): bar weight is positive`, String(inv.barKg));
+    ok(inv.maxPerDumbbellKg >= inv.barKg, `normalize(${JSON.stringify(raw)}): cap clears the bar`);
+    ok(inv.maxPlatesPerSide >= 1, `normalize(${JSON.stringify(raw)}): at least one plate per side`);
+    ok(Object.entries(inv.plates).every(([d, n]) => Number(d) > 0 && n > 0), `normalize(${JSON.stringify(raw)}): no zero or negative plates`);
+    const loads = achievableLoads(inv, 'pair');
+    ok(loads.length >= 1 && loads.every((l) => Number.isFinite(l.kg)), `normalize(${JSON.stringify(raw)}): produces a finite ladder`);
+  }
+
+  // A plateless bar is a legitimate setup, not an error.
+  const bareBar = normalizeInventory({ barKg: 2, plates: {}, maxPerDumbbellKg: 20, maxPlatesPerSide: 3 });
+  ok(achievableLoads(bareBar, 'pair').map((l) => l.kg).join(',') === '2', 'a bar with no plates offers exactly one weight');
+  ok(nearestLoad(15, bareBar, 'pair').kg === 2, 'nearestLoad falls back to the bare bar');
 });
 
 /* ─────────── Exercise library ─────────── */
@@ -180,6 +223,95 @@ group('Progression rules', () => {
 
   const bw = suggestWeight({ id: 'pushup', ...EXERCISES.pushup }, { history: [], inventory: DEFAULT_INVENTORY, experience: 'beginner', wave });
   ok(bw.kg === null, 'bodyweight exercises never get a weight');
+});
+
+/* ─────────── The wave, across its boundaries ─────────── */
+
+group('Wave progression across a full block', () => {
+  const meta = { id: 'floor-press', ...EXERCISES['floor-press'] };
+
+  /**
+   * Walk N weeks, hitting the top of whatever rep range each week prescribes.
+   * The old code judged last week's reps against *this* week's target, so the
+   * deload's target of 8 was trivially cleared by a peak-week set of 12 — and
+   * the "did they earn a step up?" branch never applied wave.factor at all.
+   * Week 4 therefore prescribed the heaviest load of the entire block.
+   */
+  function walk(weeks) {
+    const history = [];
+    const out = [];
+    for (let week = 1; week <= weeks; week++) {
+      const w = waveOf(week);
+      const s = suggestWeight(meta, { history, inventory: DEFAULT_INVENTORY, experience: 'beginner', wave: w });
+      out.push({ week, n: w.n, factor: w.factor, kg: s.kg, baseKg: s.baseKg, progressed: s.progressed });
+      history.push({
+        date: `2026-01-${String(week).padStart(2, '0')}`,
+        week,
+        exercises: [{
+          id: 'floor-press', mode: 'pair', baseKg: s.baseKg,
+          sets: [1, 2, 3].map(() => ({ kg: s.kg, reps: w.reps[1], done: true })),
+        }],
+      });
+    }
+    return out;
+  }
+
+  const block = walk(8);
+  const at = (week) => block.find((r) => r.week === week);
+
+  ok(at(4).factor === 0.75 && at(8).factor === 0.75, 'weeks 4 and 8 are the deload weeks');
+  ok(at(4).kg < at(3).kg, `the deload is lighter than the peak week (${at(4).kg} < ${at(3).kg})`);
+  ok(at(8).kg < at(7).kg, `the second deload is lighter than its peak week (${at(8).kg} < ${at(7).kg})`);
+  ok(block.filter((r) => r.factor < 1).every((r) => r.kg <= Math.round(r.baseKg * 0.75 + 0.01)),
+    'a deload never exceeds 75% of the working weight');
+  ok(block.filter((r) => r.factor < 1).every((r) => !r.progressed),
+    'a deload is never reported as a step up');
+
+  // The deload must not become the new baseline: week 5 works from the peak.
+  ok(at(5).baseKg >= at(3).baseKg, `week 5 resumes the pre-deload working weight (${at(5).baseKg} ≥ ${at(3).baseKg})`);
+  ok(at(5).kg >= at(3).kg, 'the block after a deload does not restart lighter');
+  ok(at(8).baseKg > at(4).baseKg, 'the working weight still climbs across blocks');
+
+  // Sanity: the whole point of the program is that load trends upward.
+  const peaks = block.filter((r) => r.factor === 1).map((r) => r.kg);
+  ok(peaks.every((v, i) => i === 0 || v >= peaks[i - 1]), `full-effort weeks never regress (${peaks.join(' → ')})`);
+  ok(peaks[peaks.length - 1] > peaks[0], 'eight weeks of hitting every target raises the weight');
+
+  // Coming out of a deload having done exactly the deload's easy work is not
+  // evidence of progress — it must not trigger a step up.
+  const afterDeload = suggestWeight(meta, {
+    history: [{
+      date: '2026-02-01', week: 4,
+      exercises: [{ id: 'floor-press', mode: 'pair', baseKg: 16, sets: [{ kg: 12, reps: 8, done: true }, { kg: 12, reps: 8, done: true }] }],
+    }],
+    inventory: DEFAULT_INVENTORY, experience: 'beginner', wave: waveOf(5),
+  });
+  ok(afterDeload.kg === 16 && !afterDeload.progressed, 'the week after a deload returns to the working weight, not above it', `${afterDeload.kg} kg`);
+
+  // History written before baseKg existed still has to survive the boundary.
+  const legacyDeload = suggestWeight(meta, {
+    history: [{
+      date: '2026-02-01', week: 4,
+      exercises: [{ id: 'floor-press', mode: 'pair', sets: [{ kg: 12, reps: 8, done: true }, { kg: 12, reps: 8, done: true }] }],
+    }],
+    inventory: DEFAULT_INVENTORY, experience: 'beginner', wave: waveOf(5),
+  });
+  ok(legacyDeload.kg >= 12, 'pre-v5 deload history reconstructs a working weight at or above the deloaded one', `${legacyDeload.kg} kg`);
+  ok(!legacyDeload.progressed, 'and does not read the deload as a step up');
+
+  // Missing the target still holds the weight, in every week of the wave.
+  for (const week of [1, 2, 3, 4]) {
+    const w = waveOf(week);
+    const missed = suggestWeight(meta, {
+      history: [{
+        date: '2026-03-01', week: 1,
+        exercises: [{ id: 'floor-press', mode: 'pair', baseKg: 12, sets: [{ kg: 12, reps: 4, done: true }] }],
+      }],
+      inventory: DEFAULT_INVENTORY, experience: 'beginner', wave: w,
+    });
+    ok(missed.baseKg === 12 && !missed.progressed, `week ${week}: missing the target holds the working weight`, `${missed.baseKg} kg`);
+    ok(missed.kg <= 12, `week ${week}: and never prescribes more than it`);
+  }
 });
 
 /* ─────────── Nutrition ─────────── */
@@ -300,7 +432,7 @@ group('Tonnage', () => {
   for (const day of DAYS) {
     for (const slot of day.main) {
       const meta = EXERCISES[slot.id];
-      const v = setVolume({ done: true, kg: 10, reps: 10 }, { mode: meta.mode, perSide: slot.perSide, isTime: slot.time });
+      const v = setVolume({ done: true, kg: 10, reps: 10 }, { mode: meta.mode, perSide: meta.perSide, isTime: slot.time });
       ok(Number.isFinite(v) && v >= 0, `${slot.id}: tonnage is a sane number`, String(v));
     }
   }
@@ -367,6 +499,48 @@ group('Exercise substitution', () => {
   const plain = buildSession({ rotation: 0, week: 1, history: [], inventory: DEFAULT_INVENTORY, experience: 'beginner' });
   ok(plain.exercises.every((e) => e.slotId === e.id && !e.substituted), 'an unsubstituted session marks nothing as swapped');
   ok(plain.exercises.length === swapped.exercises.length, 'substituting does not change the session shape');
+
+  // perSide belongs to the movement, not to the slot it happens to occupy.
+  // As a slot flag it survived substitution, so swapping the one-arm row for a
+  // two-arm row kept counting reps per side and doubled its tonnage — in the
+  // weekly chart the app calls its main "is the load going up?" signal.
+  ok(EXERCISES['one-arm-row'].perSide === true, 'the one-arm row is per side');
+  ok(!EXERCISES['bent-row'].perSide, 'the two-arm row is not');
+
+  const rowSwap = buildSession({
+    rotation: 1, week: 1, history: [], inventory: DEFAULT_INVENTORY,
+    experience: 'inter', substitutions: { 'one-arm-row': 'bent-row' },
+  });
+  const swappedRow = rowSwap.exercises.find((e) => e.slotId === 'one-arm-row');
+  ok(swappedRow.id === 'bent-row' && swappedRow.perSide === false, 'substituting a unilateral slot clears the per-side flag');
+
+  const set = { done: true, kg: 12, reps: 10 };
+  ok(setVolume(set, swappedRow) === 12 * 2 * 10, 'the substitute is scored as the bilateral lift it is', String(setVolume(set, swappedRow)));
+
+  const original = buildSession({ rotation: 1, week: 1, history: [], inventory: DEFAULT_INVENTORY, experience: 'inter' })
+    .exercises.find((e) => e.slotId === 'one-arm-row');
+  ok(original.perSide === true, 'the unsubstituted slot is still per side');
+  ok(setVolume(set, original) === 12 * 10 * 2, 'and still counts both sides', String(setVolume(set, original)));
+
+  // Every program slot must agree with its exercise, in both directions.
+  for (const day of DAYS) {
+    const session = buildSession({ rotation: DAYS.indexOf(day), week: 1, history: [], inventory: DEFAULT_INVENTORY, experience: 'beginner' });
+    for (const e of session.exercises) {
+      ok(e.perSide === (EXERCISES[e.id].perSide === true), `day ${day.key} / ${e.id}: perSide comes from the exercise`);
+    }
+  }
+  // And the swap targets offered in the UI must be scored correctly too.
+  for (const day of DAYS) {
+    for (const slot of day.main) {
+      for (const alt of alternativesFor(slot.id)) {
+        const s = buildSession({
+          rotation: DAYS.indexOf(day), week: 1, history: [], inventory: DEFAULT_INVENTORY,
+          experience: 'beginner', substitutions: { [slot.id]: alt.id },
+        }).exercises.find((e) => e.slotId === slot.id);
+        ok(s.perSide === (EXERCISES[alt.id].perSide === true), `${slot.id} → ${alt.id}: per-side follows the substitute`);
+      }
+    }
+  }
 });
 
 /* ─────────── Result ─────────── */

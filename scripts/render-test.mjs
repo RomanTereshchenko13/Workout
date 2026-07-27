@@ -24,6 +24,10 @@ function makeElement(tag, ns) {
     listeners: {},
     style: { setProperty(k, v) { this[k] = v; } },
     dataset: {},
+    // Real inputs carry a `value` property, so h() assigns to it rather than
+    // falling through to setAttribute. Without this the stub silently diverged
+    // from the browser for every form the app builds.
+    value: '',
     classList: {
       _set: new Set(),
       add(...c) { c.forEach((x) => this._set.add(x)); },
@@ -541,7 +545,7 @@ store.importJSON(legacy);
 const migrated = store.get().logs[0].exercises[0];
 ok(migrated.perSide === true, 'the v4 migration backfills perSide on a unilateral exercise');
 ok(totalVolume(store.get().logs[0].exercises) === 8 * 2 * 10 * 2, 'migrated history reports the corrected tonnage');
-ok(store.get().v === 4, 'the imported blob is stamped with the current schema');
+ok(store.get().v === 5, 'the imported blob is stamped with the current schema', String(store.get().v));
 store.importJSON(keep);
 
 // ── Backup reminder ──
@@ -582,7 +586,113 @@ const reloaded = JSON.parse(store.exportJSON());
 ok(reloaded.active.rest.left === 45, 'the rest deadline survives an export/reload round trip');
 store.saveRest(null);
 ok(store.get().active.rest === null, 'clearing the rest timer clears the stored deadline');
+
+// ── The tab bar shows the rest countdown ──
+// The deadline was already persisted so a killed app could resume it, but the
+// bar that displayed it belonged to the session screen: stepping out to the
+// exercise library made a running countdown vanish from view.
+console.log('\nRest countdown in the tab bar');
+
+/** The tab bar is repainted by a store subscription, so any write refreshes it. */
+const sessionTabNode = () => findByClass(tabsRoot, 'tab-session')[0];
+const sessionTabLabel = () => walk(findByClass(sessionTabNode(), 'tab-label')[0]).text.join('').trim();
+
+globalThis.location.hash = '#/';
+store.saveRest({ endsAt: Date.now() + 95000, total: 120, paused: false, left: 95 });
+const resting = sessionTabNode();
+ok(!!resting, 'a running session puts a live tab in the bar');
+ok(resting.classList.contains('is-resting'), 'the tab marks itself as counting down a rest');
+ok(/^\d+:\d{2}$/.test(sessionTabLabel()), 'the tab label is a mm:ss countdown', sessionTabLabel());
+ok((resting.getAttribute('aria-label') || '').includes('Відпочинок'), 'the countdown is announced, not just drawn');
+
+store.saveRest({ endsAt: 0, total: 120, paused: true, left: 42 });
+ok(sessionTabLabel() === '0:42', 'a paused rest still shows its remaining time', sessionTabLabel());
+
+// An expired deadline is not a countdown — the tab goes back to plain "in progress".
+store.saveRest({ endsAt: Date.now() - 5000, total: 120, paused: false, left: 0 });
+ok(!sessionTabNode().classList.contains('is-resting'), 'an elapsed deadline stops being shown as a countdown');
+ok(sessionTabLabel() === 'Триває', 'and the tab falls back to the plain label', sessionTabLabel());
+
+store.saveRest(null);
+ok(sessionTabLabel() === 'Триває', 'no rest at all shows the plain label');
 store.discardSession();
+ok(!sessionTabNode(), 'finishing the workout removes the live tab');
+
+// ── Weekly tonnage keeps empty weeks ──
+// Dropping untrained weeks packed the bars together, so a three-week break
+// rendered as three adjacent bars — the chart read "steady" across a gap.
+console.log('\nWeekly tonnage chart');
+const { weeklyVolume, editLogSheet } = await import('../js/views/progress.js');
+
+const heavy = (kgPer) => [{ id: 'floor-press', mode: 'pair', perSide: false, sets: [{ done: true, kg: kgPer, reps: 10 }] }];
+const gappy = [
+  { date: '2026-03-02', exercises: heavy(10) }, // Monday
+  { date: '2026-03-30', exercises: heavy(10) }, // four weeks later
+];
+const bars = weeklyVolume(gappy);
+ok(bars.length === 5, 'a four-week gap produces five slots, not two', String(bars.length));
+ok(bars[0].value > 0 && bars[bars.length - 1].value > 0, 'the trained weeks carry the tonnage');
+ok(bars.slice(1, -1).every((b) => b.value === 0), 'the untrained weeks in between are zero');
+ok(bars[bars.length - 1].highlight === true, 'the most recent week is highlighted');
+ok(weeklyVolume([]).length === 0, 'no history means no chart');
+ok(weeklyVolume([{ date: '2026-03-02', exercises: heavy(10) }]).length === 1, 'a single week is a single bar');
+
+const long = Array.from({ length: 20 }, (_, i) => ({ date: `2026-0${1 + Math.floor(i / 10)}-${String(1 + (i % 10) * 2).padStart(2, '0')}`, exercises: heavy(10) }));
+ok(weeklyVolume(long).length <= 8, 'the chart never shows more than eight weeks', String(weeklyVolume(long).length));
+
+// ── Editing a finished workout ──
+// Previously a mistyped set could only be fixed by deleting the whole session,
+// which also deleted the history that decides the next session's weights.
+console.log('\nEditing a finished workout');
+restart();
+const target = store.get().logs[store.get().logs.length - 1];
+const beforeVolume = totalVolume(target.exercises);
+const historySize = store.get().logs.length;
+const untouched = store.get().logs[0];
+const untouchedVolume = totalVolume(untouched.exercises);
+ok(beforeVolume > 0, 'the workout to edit has tonnage to change', String(beforeVolume));
+
+/** Click a sheet action by its visible label. */
+function clickSheetAction(label) {
+  const wrap = document.body.children.filter((c) => c.classList?.contains?.('sheet-wrap')).pop();
+  const actions = findByClass(wrap, 'sheet-actions')[0];
+  const button = (actions?.children || []).find((b) => walk(b).text.join('').includes(label));
+  button?.click();
+  return !!button;
+}
+
+editLogSheet(target);
+const editWrap = document.body.children.filter((c) => c.classList?.contains?.('sheet-wrap')).pop();
+ok(walk(editWrap).text.join(' ').includes('Редагувати'), 'the edit sheet opens on the chosen workout');
+const toggles = findByClass(editWrap, 'set-toggle');
+ok(toggles.length > 0, 'every logged set gets a "counted" toggle', String(toggles.length));
+ok(toggles.every((t) => t.classList.contains('is-done')), 'sets that were completed start toggled on');
+
+// Change the first set: fewer reps, heavier, and drop the second set entirely.
+const editInputs = findByClass(editWrap, 'edit-set').map((row) => row.children.filter((c) => c.classList?.contains?.('edit-set-field')));
+editInputs[0][0].children.find((c) => c.tagName === 'INPUT').value = 5;
+if (editInputs[0][1]) editInputs[0][1].children.find((c) => c.tagName === 'INPUT').value = 18;
+toggles[1].click();
+ok(!toggles[1].classList.contains('is-done'), 'un-toggling a set marks it as not done');
+
+ok(clickSheetAction('Зберегти'), 'the edit sheet offers a save action');
+const edited = store.get().logs.find((l) => l.id === target.id);
+ok(!!edited, 'the edited workout is still in history');
+ok(edited.exercises[0].sets[0].reps === 5, 'the reps edit is persisted', String(edited.exercises[0].sets[0].reps));
+ok(edited.exercises[0].sets[1].done === false, 'the un-toggled set is recorded as not done');
+ok(totalVolume(edited.exercises) !== beforeVolume, 'the edit is reflected in the tonnage');
+ok(store.get().logs.length === historySize, 'editing adds and removes nothing', String(store.get().logs.length));
+ok(totalVolume(store.get().logs[0].exercises) === untouchedVolume, 'and leaves every other workout alone');
+
+// The edit has to feed back into what the program prescribes next.
+const post = buildSession({
+  rotation: store.get().state.rotation, week: store.get().state.week,
+  history: store.get().logs, inventory: store.get().inventory, experience: store.get().profile.experience,
+});
+ok(post.exercises.every((e) => e.mode === 'bw' || Number.isFinite(e.suggested.kg)), 'the next session still plans a real weight after an edit');
+
+store.updateLog('no-such-log', () => { throw new Error('must not run'); });
+ok(true, 'updating a missing log is a no-op rather than a throw');
 
 console.log(`\n${failed ? '✗' : '✓'} ${passed} checks passed, ${failed} failed (${nodesCreated} DOM nodes built)\n`);
 process.exit(failed ? 1 : 0);

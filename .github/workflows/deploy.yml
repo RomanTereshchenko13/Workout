@@ -36,7 +36,6 @@ jobs:
           BUILD="${GITHUB_SHA::7}-$(date -u +%Y%m%d%H%M)"
           echo "Build id: $BUILD"
           sed -i "s/__BUILD__/$BUILD/g" sw.js index.html
-          printf '%s' "$BUILD" > build.txt
           touch .nojekyll
 
       - name: Sanity check — no unstamped placeholders left

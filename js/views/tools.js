@@ -125,10 +125,18 @@ function inventoryCard(d) {
           const v = parseInt(inputs[dn].value, 10);
           if (v > 0) plates[dn] = v;
         }
+        // The `min` attributes do not stop anyone typing, and a cap below the
+        // bar weight leaves no liftable weight at all. The store normalises too;
+        // this is the layer that can say *why* rather than silently clamping.
+        const barKg = parseFloat(barInput.value);
+        const maxKg = parseFloat(maxInput.value);
+        if (!(barKg > 0)) return toast('Вага грифа має бути більшою за 0', 'bad');
+        if (!(maxKg >= barKg)) return toast(`Ліміт на гантель не може бути меншим за гриф (${barKg} кг)`, 'bad');
+
         saveInventory({
-          barKg: parseFloat(barInput.value) || 2,
+          barKg,
           plates,
-          maxPerDumbbellKg: parseFloat(maxInput.value) || 20,
+          maxPerDumbbellKg: maxKg,
           maxPlatesPerSide: parseInt(sideInput.value, 10) || 3,
         });
         toast('Інвентар оновлено');

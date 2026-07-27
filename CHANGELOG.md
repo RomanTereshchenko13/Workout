@@ -49,6 +49,81 @@ deploy needs a new version.
 
 ---
 
+## 1.3.0
+
+Two new capabilities plus the fix for a progression bug that had been quietly
+undoing the 4-week wave, so MINOR by the table above.
+
+The deload fix is the ambiguous one. It changes which weight the app suggests
+next, so old logs do imply different numbers — but past history still *reads*
+identically (tonnage, records and the history screen are untouched), the
+schema-5 change is a pure additive merge, and the program now does what `WAVES`
+always declared rather than something new to relearn. That keeps it below MAJOR.
+
+### Added
+
+- **Edit a finished workout.** The ✎ button on any history card opens the sets
+  for editing — reps, weight, which sets counted, duration and note. A single
+  mistyped set previously had exactly one remedy: delete the whole session, which
+  also deleted the history that decides the next session's weights, so the fix
+  cost more than the mistake. Edits feed straight back into progression.
+- **The rest countdown follows you out of the session.** The rest deadline was
+  already persisted so a backgrounded or reaped app could resume it, but the bar
+  showing it belonged to the session screen. Stepping out to check an exercise
+  made a running countdown vanish while it was still counting. The «Триває» tab
+  now shows `mm:ss` while a rest is live.
+
+### Fixed
+
+- **The deload week prescribed the heaviest load of the block.** Week 4 declares
+  `factor: 0.75` and a rep target of 8, but the "did they earn a step up?" branch
+  never applied the factor, and it judged last week's reps against *this* week's
+  target — so a peak-week set of 12 cleared the deload's target of 8 trivially
+  and stepped the weight up going into the deload. Simulated over 8 weeks the app
+  offered 12 kg in the deload against 10 kg at the peak, while telling the user
+  «Легко й технічно». Progression now tracks a working weight (`baseKg`, logged
+  from schema 5) that a deload cannot corrupt, judges each session against the
+  target it was actually performed to, and never reports a deload as a step up.
+- **Substituting an exercise could double its tonnage.** `perSide` lived on the
+  program slot rather than the movement, so it survived a swap: replacing the
+  one-arm row with a two-arm row kept counting reps per side and scored a
+  12 kg × 10 set as 480 kg instead of 240 kg. It now lives on the `EXERCISES`
+  entry and is re-derived on every substitution, permanent or for-today. Existing
+  logs are deliberately left alone — they record what was actually performed.
+- **A bad inventory bricked the app permanently.** A per-dumbbell cap below the
+  bar weight made the weight ladder empty, and `nearestLoad()` then reduced over
+  an empty array and threw. Every screen plans a session, so every screen threw,
+  on every launch, with the bad value already in `localStorage` — the error card's
+  own "На головну" button re-threw, and only wiping all data recovered. The ladder
+  now always contains at least the bare bar, `normalizeInventory()` clamps
+  anything stored or imported, and the inventory form explains the rejection
+  instead of silently accepting it.
+- **The service worker could cache a 404 as the app.** The navigation handler
+  stored every response as the offline shell without checking `response.ok`, so
+  one bad reply from Pages was served as the app itself for the life of that
+  build's cache.
+- **The tonnage chart hid training gaps.** Weeks with no workouts were dropped
+  rather than drawn as empty, so a three-week break rendered as three adjacent
+  bars — the chart read "steady" across exactly the period where nothing happened.
+- **Pinch-zoom was disabled.** `maximum-scale=1` in the viewport tag fails
+  WCAG 1.4.4 and nothing in the layout depended on it.
+
+### Internal
+
+- `finisherNode` was never cleared on session teardown, keeping a detached card
+  alive and leaving a stale `replaceNode` target for the next workout.
+- `macroTargets()` called `calorieTarget()` twice for one result.
+- Dropped the dead `GET_BUILD` service-worker handler and the `build.txt` CI step
+  that nothing ever read.
+- The render-test DOM stub now gives elements a `value` property, so `h()`
+  assigns to it as a browser would instead of falling through to `setAttribute`.
+- New regression coverage for the whole wave cycle (the blind spot that let the
+  deload bug through — the old suite never crossed a wave boundary), per-side
+  scoring across every substitution the UI offers, degenerate inventories, chart
+  gap-filling, workout editing and the tab-bar countdown.
+
+---
+
 ## 1.2.0
 
 New capability plus a batch of fixes, so MINOR by the table above. The tonnage

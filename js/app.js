@@ -1,11 +1,11 @@
 /** App shell: router, tab bar, onboarding, service-worker update flow. */
 
-import { h, clear, btn, field, num, select, segmented, toast, card } from './ui.js';
+import { h, clear, btn, field, num, select, segmented, toast, card, mmss } from './ui.js';
 import { get, subscribe, subscribeExternal, saveProfile } from './store.js';
 import { primeAudio, keepAwake } from './lib/timer.js';
 import { ACTIVITY } from './lib/nutrition.js';
 
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
 
 const ROUTES = {
   '#/': { label: 'Головна', icon: '🏋', load: () => import('./views/home.js').then((m) => m.homeView) },
@@ -113,13 +113,62 @@ function renderTabs(active) {
   }
   if (data.active && active !== '#/session') {
     bar.classList.add('has-session');
-    bar.appendChild(h('button', { class: 'tab tab-session', onclick: () => go('#/session'), 'aria-label': 'Повернутися до тренування, що триває' },
-      h('span', { class: 'tab-icon', 'aria-hidden': 'true' }, '⏱'),
-      h('span', { class: 'tab-label' }, 'Триває'),
-    ));
+    bar.appendChild(sessionTab());
   } else {
+    stopTabClock();
     bar.classList.remove('has-session');
   }
+}
+
+/* ─────────────── Live session tab ─────────────── */
+
+let tabClockId = null;
+
+function stopTabClock() {
+  if (tabClockId) clearInterval(tabClockId);
+  tabClockId = null;
+}
+
+/** Seconds left on a persisted rest deadline, or null if none is running. */
+function restLeft(rest) {
+  if (!rest || !rest.total) return null;
+  const left = rest.paused ? rest.left : Math.round((rest.endsAt - Date.now()) / 1000);
+  return left > 0 ? left : null;
+}
+
+/**
+ * The "workout in progress" tab, doubling as the rest countdown.
+ *
+ * A rest timer keeps running after you leave the session screen — its deadline
+ * is persisted, precisely so a backgrounded app does not lose it. But the bar
+ * that displays it belongs to the session screen, so stepping out to check the
+ * exercise library meant the countdown vanished while still running, and the
+ * only way to see it was to navigate back.
+ */
+function sessionTab() {
+  const icon = h('span', { class: 'tab-icon', 'aria-hidden': 'true' }, '⏱');
+  const label = h('span', { class: 'tab-label' }, 'Триває');
+  const tab = h('button', { class: 'tab tab-session', onclick: () => go('#/session') }, icon, label);
+
+  const paint = () => {
+    const left = restLeft(get().active?.rest);
+    const resting = left !== null;
+    tab.classList.toggle('is-resting', resting);
+    label.textContent = resting ? mmss(left) : 'Триває';
+    tab.setAttribute('aria-label', resting
+      ? `Відпочинок, залишилось ${mmss(left)}. Повернутися до тренування`
+      : 'Повернутися до тренування, що триває');
+  };
+
+  paint();
+  stopTabClock();
+  tabClockId = setInterval(() => {
+    // `=== false` on purpose: a detached-but-untracked node reports undefined.
+    if (tab.isConnected === false) return stopTabClock();
+    paint();
+  }, 1000);
+  tabClockId?.unref?.();
+  return tab;
 }
 
 /* ─────────────── Onboarding ─────────────── */

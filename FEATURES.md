@@ -48,7 +48,9 @@ The screen you actually use while training, designed for sweaty hands and a phon
 
 Everything is written to storage as it happens, so closing the app mid-workout loses nothing. If a write ever fails — a full or blocked `localStorage` — the app says so instead of reporting a save that did not happen.
 
-Unilateral exercises (lunges, one-arm rows, carries) are counted per side: "8 reps" means 8 per leg, and the tonnage reflects both.
+Unilateral exercises (lunges, one-arm rows, carries) are counted per side: "8 reps" means 8 per leg, and the tonnage reflects both. This follows the movement, not the slot — swap a one-arm row for a two-arm row and it stops being counted per side.
+
+If a rest timer is running when you leave the session screen, the «Триває» tab keeps counting it down, so stepping out to look something up does not lose the rest.
 
 ---
 
@@ -58,9 +60,9 @@ Three tabs.
 
 **Вага.** A chart with daily weigh-ins as dots, the smoothed trend as a line, and the goal as a dashed line. Trend-based change over 7 / 14 / 30 days. A forecast card — kg per week, weeks remaining, projected date. If two weeks pass without movement, a plateau card appears with concrete next steps instead of a generic "keep going". Cardio of the last two weeks and the full weigh-in log with per-entry deletion.
 
-**Сила.** Weekly tonnage bars (weight × reps × sets, counting both dumbbells, and both sides for unilateral work), and per-exercise records ranked by estimated 1RM (Epley). Tapping a record opens that exercise's full history.
+**Сила.** Weekly tonnage bars (weight × reps × sets, counting both dumbbells, and both sides for unilateral work), and per-exercise records ranked by estimated 1RM (Epley). Tapping a record opens that exercise's full history. Weeks you did not train are drawn as empty bars rather than skipped, so a break looks like a break.
 
-**Історія.** Every session: date, wave week, sets, duration, tonnage, finisher rounds completed, expandable per-exercise detail, and your note. Individual sessions can be deleted.
+**Історія.** Every session: date, wave week, sets, duration, tonnage, finisher rounds completed, expandable per-exercise detail, and your note. Sessions can be edited (✎) or deleted (✕) — editing covers reps, weight, which sets counted, duration and the note, and feeds straight back into the weights the program suggests next.
 
 ---
 
@@ -100,9 +102,9 @@ Data section: JSON export, import, and a full reset behind a confirmation — pl
 
 ## Cross-cutting behaviour
 
-**Progression.** Double progression: hit the top of the rep range on every set and the next session steps the weight up to the next buildable load; fall short and the weight holds while you chase the reps. At the inventory ceiling it stops asking for more weight and advises reps and tempo instead. Each suggestion shows its reason ("last time 10/10/9 — chase the reps").
+**Progression.** Double progression: hit the top of the rep range on every set and the next session steps the weight up to the next buildable load; fall short and the weight holds while you chase the reps. Each session is judged against the rep target it was actually given, not the one the upcoming week happens to use. At the inventory ceiling it stops asking for more weight and advises reps and tempo instead. Each suggestion shows its reason ("last time 10/10/9 — chase the reps").
 
-**Periodisation.** Weeks cycle base → volume → peak → deload. Week 4 deliberately drops sets and load; the app explains that this is part of the plan, not a lost week.
+**Periodisation.** Weeks cycle base → volume → peak → deload. Week 4 deliberately drops sets and load — it prescribes 75% of your working weight and says so on the card. The deload does not become the new baseline: week 5 resumes at the working weight the peak week earned, and easy work done easily during a deload never counts as grounds for a step up.
 
 **Rotation.** Days advance A → B → C per completed session; a full cycle advances the wave week. Skipping a day costs nothing — you simply do the next one.
 
@@ -110,7 +112,7 @@ Data section: JSON export, import, and a full reset behind a confirmation — pl
 
 **Installable.** Standalone display, maskable icons, app shortcuts to "start a workout", "weigh in" and the plate calculator.
 
-**Accessible.** Bottom sheets are proper dialogs — labelled, focus-trapped, dismissible with Escape, and they hand focus back where it came from. Every icon-only button has a spoken name, charts carry a text summary, and keyboard focus is visible.
+**Accessible.** Bottom sheets are proper dialogs — labelled, focus-trapped, dismissible with Escape, and they hand focus back where it came from. Every icon-only button has a spoken name, charts carry a text summary, keyboard focus is visible, and pinch-zoom is never blocked.
 
 **Dates are local.** Every day boundary is the user's own calendar day, not UTC — so opening the app at 01:00 does not put "today" on yesterday.
 

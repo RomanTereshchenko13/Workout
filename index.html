@@ -2,7 +2,9 @@
 <html lang="uk">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <!-- No maximum-scale: locking zoom fails WCAG 1.4.4, and nothing in the
+       layout depends on it — the whole app is a single scrolling column. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Home Workout</title>
   <meta name="description" content="Персональна програма тренувань під дві набірні гантелі до 20 кг: сила, схуднення, трекер ваги. Працює офлайн." />
 

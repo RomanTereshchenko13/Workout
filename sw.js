@@ -65,7 +65,6 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
-  if (event.data?.type === 'GET_BUILD') event.source?.postMessage({ type: 'BUILD', build: BUILD });
 });
 
 self.addEventListener('fetch', (event) => {
@@ -81,8 +80,13 @@ self.addEventListener('fetch', (event) => {
       (async () => {
         try {
           const fresh = await fetch(req);
-          const cache = await caches.open(CACHE);
-          cache.put('./index.html', fresh.clone());
+          // Only a real page becomes the offline shell. Caching unconditionally
+          // meant one 404 or 5xx from Pages was served as the app itself for the
+          // whole life of this build's cache.
+          if (fresh.ok) {
+            const cache = await caches.open(CACHE);
+            cache.put('./index.html', fresh.clone());
+          }
           return fresh;
         } catch {
           const cache = await caches.open(CACHE);

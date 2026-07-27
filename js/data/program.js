@@ -18,6 +18,11 @@ export const WAVES = {
 /**
  * Training days. Exercises sharing an `ss` value are performed as a superset.
  * Rep targets come from the wave — a day only declares base sets and rest.
+ *
+ * Whether reps are counted per limb is NOT declared here: it belongs to the
+ * movement, and lives on the EXERCISES entry. A slot-level flag survived
+ * substitutions, so swapping the one-arm row for a two-arm row kept counting it
+ * per side and reported double its real tonnage.
  */
 export const DAYS = [
   {
@@ -28,7 +33,7 @@ export const DAYS = [
     main: [
       { id: 'goblet-squat', sets: 3, rest: 100 },
       { id: 'floor-press', sets: 3, rest: 100 },
-      { id: 'reverse-lunge', sets: 3, rest: 80, perSide: true },
+      { id: 'reverse-lunge', sets: 3, rest: 80 },
       { id: 'ohp', sets: 3, rest: 80 },
       { id: 'lateral-raise', sets: 3, rest: 50, ss: 1 },
       { id: 'narrow-floor-press', sets: 3, rest: 50, ss: 1 },
@@ -55,10 +60,10 @@ export const DAYS = [
       { id: 'rdl', sets: 4, rest: 100 },
       { id: 'bent-row', sets: 4, rest: 100 },
       { id: 'hip-thrust', sets: 3, rest: 80 },
-      { id: 'one-arm-row', sets: 3, rest: 70, perSide: true },
+      { id: 'one-arm-row', sets: 3, rest: 70 },
       { id: 'hammer-curl', sets: 3, rest: 50, ss: 1 },
       { id: 'reverse-fly', sets: 3, rest: 50, ss: 1 },
-      { id: 'suitcase-carry', sets: 2, rest: 45, time: true, perSide: true },
+      { id: 'suitcase-carry', sets: 2, rest: 45, time: true },
     ],
     finisher: {
       title: 'Фінішер: махи + берпі',
@@ -78,12 +83,12 @@ export const DAYS = [
     focus: 'Сідниці, стегна, кор, витривалість',
     color: '#3ddc84',
     main: [
-      { id: 'bulgarian-split', sets: 3, rest: 90, perSide: true },
+      { id: 'bulgarian-split', sets: 3, rest: 90 },
       { id: 'push-press', sets: 3, rest: 90 },
       { id: 'sumo-dl', sets: 3, rest: 90 },
-      { id: 'renegade-row', sets: 3, rest: 70, perSide: true },
+      { id: 'renegade-row', sets: 3, rest: 70 },
       { id: 'calf-raise', sets: 3, rest: 45, ss: 1 },
-      { id: 'russian-twist', sets: 3, rest: 45, ss: 1, perSide: true },
+      { id: 'russian-twist', sets: 3, rest: 45, ss: 1 },
       { id: 'farmer-walk', sets: 3, rest: 60, time: true },
     ],
     finisher: {
@@ -120,61 +125,87 @@ export function waveOf(weekNumber) {
 const LEVEL_KEY = { beginner: 'beginner', inter: 'inter', adv: 'adv' };
 
 /**
- * Pick the working weight: derive it from history, or estimate a start.
+ * The weight the lifter is actually good for right now, with the wave's deload
+ * scaling taken back out.
+ *
+ * In a normal week what they lifted *is* the working weight, so a manual
+ * override during the session is respected. A deload week deliberately
+ * prescribes 75%; reading that number back as the new working weight made every
+ * block restart lighter than the one before.
+ */
+function workingWeight(last, inventory, loadMode) {
+  const factor = waveOf(last.week || 1).factor;
+  if (factor >= 1) return last.topWeight;
+  // Logged from schema 5 on: the pre-scaling weight the plan was built from.
+  // Taking the max also honours a lifter who ignored the deload and went heavy.
+  if (Number.isFinite(last.baseKg) && last.baseKg > 0) return Math.max(last.baseKg, last.topWeight);
+  // Older history has only the scaled figure. Scale it back and round *up*: the
+  // deload load was rounded down onto the ladder, so rounding down again here
+  // would quietly cost a step every fourth week.
+  return nearestLoad(last.topWeight / factor, inventory, loadMode, 'up').kg;
+}
+
+/**
+ * Pick the weight for an exercise: derive it from history, or estimate a start.
+ *
+ * `baseKg` is the working weight, `kg` is what to actually load today — they
+ * differ on a deload week. Storing both is what keeps the deload from being
+ * mistaken for a regression next week.
+ *
  * @param {object} exercise an EXERCISES entry plus its id
  * @param {object} ctx {history, inventory, experience, wave}
- * @returns {{kg:number|null, load:object|null, reason:string, progressed:boolean}}
+ * @returns {{kg:number|null, baseKg:number|null, load:object|null, reason:string, progressed:boolean}}
  */
 export function suggestWeight(exercise, ctx) {
   const { inventory, experience = 'beginner', wave } = ctx;
   const mode = exercise.mode;
-  if (mode === 'bw') return { kg: null, load: null, reason: 'Вага тіла', progressed: false };
+  if (mode === 'bw') return { kg: null, baseKg: null, load: null, reason: 'Вага тіла', progressed: false };
 
   const loadMode = mode === 'pair' ? 'pair' : 'single';
+  const factor = wave?.factor ?? 1;
+
+  /** Scale a working weight by the wave and land it on the ladder. */
+  const prescribe = (baseKg, reason, progressed = false) => {
+    const load = nearestLoad(baseKg * factor, inventory, loadMode, 'down');
+    if (factor < 1) {
+      // Never advertise a step up on a deload: the number on screen is lower
+      // than last week's on purpose, and calling that "progress" reads as a bug.
+      return { kg: load.kg, baseKg, load, progressed: false, reason: `Розгрузка: ${Math.round(factor * 100)}% від робочих ${baseKg} кг` };
+    }
+    return { kg: load.kg, baseKg, load, reason, progressed };
+  };
+
   const last = lastPerformance(ctx.history, exercise.id);
 
   // No history yet — estimate from the declared experience level.
   if (!last) {
     const base = (exercise.start && exercise.start[LEVEL_KEY[experience]]) || 6;
-    const load = nearestLoad(base * (wave?.factor ?? 1), inventory, loadMode, 'down');
-    return { kg: load.kg, load, reason: 'Стартова оцінка — підкоригуй по відчуттях', progressed: false };
+    return prescribe(nearestLoad(base, inventory, loadMode, 'down').kg, 'Стартова оцінка — підкоригуй по відчуттях');
   }
 
+  const working = workingWeight(last, inventory, loadMode);
   const done = last.sets.filter((s) => s.done && s.reps > 0);
-  if (!done.length) {
-    const load = nearestLoad(last.topWeight, inventory, loadMode, 'down');
-    return { kg: load.kg, load, reason: 'Як минулого разу', progressed: false };
-  }
+  if (!done.length) return prescribe(working, 'Як минулого разу');
 
-  const target = wave?.reps?.[1] ?? 12;
+  // Judge the last session against the target it was actually performed to, not
+  // against this week's. Week 4 asks for 8 reps, so comparing a peak-week set of
+  // 12 against it passed trivially and stepped the weight up *into* the deload.
+  const lastWave = waveOf(last.week || 1);
+  const target = lastWave.reps[1];
   const allHitTop = done.every((s) => s.reps >= target);
-  const weight = last.topWeight;
 
-  if (allHitTop) {
-    const up = nextLoadUp(weight, inventory, loadMode);
-    if (up.kg > weight) {
-      return {
-        kg: up.kg,
-        load: up,
-        reason: `Минулого разу закрив усі підходи по ${target} — крок вгору`,
-        progressed: true,
-      };
-    }
-    return {
-      kg: weight,
-      load: nearestLoad(weight, inventory, loadMode),
-      reason: 'Максимум інвентарю — додавай повторення або уповільнюй темп (3 с вниз)',
-      progressed: false,
-    };
+  if (!allHitTop) {
+    return prescribe(working, `Минулого разу: ${done.map((s) => s.reps).join('/')} — добери повторення`);
   }
 
-  const load = nearestLoad(weight * (wave?.factor ?? 1), inventory, loadMode, 'down');
-  return {
-    kg: load.kg,
-    load,
-    reason: `Минулого разу: ${done.map((s) => s.reps).join('/')} — добери повторення`,
-    progressed: false,
-  };
+  // Easy work done easily is not evidence of progress — hold the working weight.
+  if (lastWave.factor < 1) return prescribe(working, 'Після розгрузки — повертаємось до робочої ваги');
+
+  const up = nextLoadUp(working, inventory, loadMode);
+  if (up.kg > working) {
+    return prescribe(up.kg, `Минулого разу закрив усі підходи по ${target} — крок вгору`, true);
+  }
+  return prescribe(working, 'Максимум інвентарю — додавай повторення або уповільнюй темп (3 с вниз)');
 }
 
 /** Most recent performance of an exercise, taken from history. */
@@ -186,6 +217,10 @@ export function lastPerformance(history = [], exerciseId) {
       const weights = sets.filter((s) => s.done).map((s) => s.kg || 0);
       return {
         date: history[i].date,
+        // Which wave week this was performed in decides both the rep target it
+        // should be judged against and whether its load was a deload.
+        week: history[i].week,
+        baseKg: entry.baseKg,
         sets,
         topWeight: weights.length ? Math.max(...weights) : 0,
       };
@@ -245,6 +280,9 @@ export function buildSession({ rotation, week, history, inventory, experience, s
       muscles: meta.muscles,
       mode: meta.mode,
       cues: meta.cues,
+      // After the spread, and read from the exercise rather than the slot: a
+      // substitution changes the movement, so it changes how reps are counted.
+      perSide: meta.perSide === true,
       sets,
       isTime,
       reps,

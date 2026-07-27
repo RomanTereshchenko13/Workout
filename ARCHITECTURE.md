@@ -70,7 +70,7 @@ Shape:
   meta:          { lastBackupAt, lastBackupLogs, nextLogSeq },
   logs: [ { id, date, dayKey, week, durationSec,
             finisherRounds, finisherTarget, finisherDone, note,
-            exercises: [ { id, slotId, mode, isTime, perSide, sets } ] } ],
+            exercises: [ { id, slotId, mode, isTime, perSide, baseKg, sets } ] } ],
   weights: [ { d, kg } ],
   cardio:  [ { d, key, minutes } ],
   active:  null | { startedAt, date, dayKey, week, exercises: [...],
@@ -82,20 +82,34 @@ Shape:
 
 Log ids come from `meta.nextLogSeq`, never from `logs.length`: a length-derived id returns a live number to the pool after a delete, and two logs sharing an id means one delete removes both.
 
+`baseKg` on a logged exercise is the **working weight** — what the lifter is good for, before the wave's deload scaling. `sets[].kg` is what was actually on the bar. On a normal week they agree; on a deload week the logged load is 75% of the working weight, and recording only that made the next block restart from the deloaded figure. See `suggestWeight()` below.
+
+Logs are the one thing migrations leave alone wherever possible: they record what was actually performed. When `perSide` moved from the program slot to the exercise in v5, existing logs kept their recorded flag rather than being re-derived — rewriting them would have changed the tonnage of workouts that really were done per side.
+
 ### `js/lib/plates.js` — the interesting one
 
 Enumerates every buildable weight by walking plate denominations under three constraints: how many plates the mode consumes per denomination (4 for a matched pair, 2 for a single dumbbell), the per-dumbbell weight ceiling, and how many plates physically fit on one side of a 35 cm bar. It keeps the variant with the fewest plates per achievable weight.
 
 Everything downstream — progression steps, the `± ` buttons, the calculator, starting weights — asks this module rather than doing arithmetic. That is the single reason the app never prescribes a weight you cannot build.
 
+Because every screen plans a session and every plan reduces over the ladder, the ladder is never allowed to be empty — it always contains at least the bare bar. `normalizeInventory()` is the matching guard on the way in, applied by the store on both save and migrate: a configuration where even the bare bar exceeded the per-dumbbell cap used to throw from every screen at once, on every launch, with the bad value already persisted and no route back from inside the app.
+
 ### `js/data/program.js` — the plan
 
-`DAYS` describes three full-body days as slot lists (`{ id, sets, rest, perSide?, time?, ss? }`). `WAVES` describes the 4-week cycle (rep ranges, set delta, intensity factor). `buildSession()` combines a rotation index, a wave week, the history, the inventory and the user's substitutions into a concrete session. `suggestWeight()` holds the progression rule and returns both a weight and a human explanation.
+`DAYS` describes three full-body days as slot lists (`{ id, sets, rest, time?, ss? }`). `WAVES` describes the 4-week cycle (rep ranges, set delta, intensity factor). `buildSession()` combines a rotation index, a wave week, the history, the inventory and the user's substitutions into a concrete session. `suggestWeight()` holds the progression rule and returns both a weight and a human explanation.
 
-Two distinctions matter when reading a session:
+Three distinctions matter when reading a session:
 
 - **`slotId` vs `id`** — the slot is the position in the program; the id is what is actually being performed there. They differ when a substitution is in play, and keeping both is what lets a swap persist across sessions and still be undone later.
 - **`ss`** — consecutive slots sharing an `ss` value are one superset. `groupExercises()` folds them into blocks for rendering, and the session screen suppresses the rest timer until the last exercise of a round.
+- **`baseKg` vs `kg`** — the working weight versus what to load today. They differ only on a deload week.
+
+**What belongs to the slot and what belongs to the movement.** A slot owns scheduling — how many sets, how long to rest, what it pairs with. The movement owns its own mechanics, and `perSide` is one of those: it says reps are counted per limb, so the set is performed twice. It lived on the slot until v5, which meant it survived substitution — swapping the one-arm row for a two-arm row kept counting per side and reported double the real tonnage. The test for a new field is simply whether it would still be true after a swap.
+
+**The wave is the part that is easy to get subtly wrong.** `suggestWeight()` tracks a working weight rather than reading the last logged load directly, because a deload week deliberately prescribes 75% of it. Two rules keep the cycle honest, and both existed as bugs first:
+
+- Judge a past session against the rep target **it** was prescribed, not this week's. Week 4 asks for 8 reps, so comparing a peak-week set of 12 against it passed trivially and stepped the weight up *into* the deload.
+- Apply `wave.factor` on **every** path out of the function, including the one that awards a step up. It was applied only on the "hold the weight" path, so the deload ended up prescribing the heaviest load of the entire block while the screen said «Легко й технічно».
 
 ---
 
@@ -124,7 +138,7 @@ Edit `DAYS` in `js/data/program.js`. A day needs a `key`, `title`, `focus`, `col
 
 ### Change the progression rule
 
-`suggestWeight()` in `program.js` is the only place it lives. It receives history, inventory, experience and the current wave, and returns `{ kg, load, reason, progressed }`. Keep returning a `reason` — the UI shows it, and an unexplained weight change reads like a bug.
+`suggestWeight()` in `program.js` is the only place it lives. It receives history, inventory, experience and the current wave, and returns `{ kg, baseKg, load, reason, progressed }`. Keep returning a `reason` — the UI shows it, and an unexplained weight change reads like a bug. Keep `baseKg` separate from `kg`, and route every return through the local `prescribe()` helper so the wave factor cannot be forgotten on one branch. If you touch this, run the 8-week walk in `smoke-test.mjs`: the bug it now guards was invisible to any test that stayed inside a single wave week.
 
 ### Add a screen
 
@@ -153,8 +167,8 @@ Three scripts, all dependency-free, all run in CI before a deploy:
 
 | Script | Covers |
 |---|---|
-| `smoke-test.mjs` | Plate ladders and their gaps, inventory feasibility of every combination, nearest/next-step selection, exercise data shape, program structure and muscle coverage, session generation across the whole wave, progression rules including the ceiling case, the nutrition formulas against hand-computed values, local-date arithmetic, tonnage (including the per-side doubling), superset grouping and substitution resolution. |
-| `render-test.mjs` | Imports every real view module against a stubbed DOM and renders each screen empty and populated. Catches broken imports, renamed helpers, crashes on empty state, and `undefined`/`NaN` leaking into the UI. Also drives full workouts through the store to verify rotation, wave advance, progression, log-id uniqueness across deletes, schema migration, rest-timer persistence, the backup reminder, accordion state, dialog semantics and accessible names on icon-only buttons. |
+| `smoke-test.mjs` | Plate ladders and their gaps, inventory feasibility of every combination, degenerate inventories that must not throw, nearest/next-step selection, exercise data shape, program structure and muscle coverage, session generation across the whole wave, progression rules including the ceiling case, a full 8-week walk across both deload boundaries, per-side scoring for every substitution the UI can offer, the nutrition formulas against hand-computed values, local-date arithmetic, tonnage, superset grouping and substitution resolution. |
+| `render-test.mjs` | Imports every real view module against a stubbed DOM and renders each screen empty and populated. Catches broken imports, renamed helpers, crashes on empty state, and `undefined`/`NaN` leaking into the UI. Also drives full workouts through the store to verify rotation, wave advance, progression, log-id uniqueness across deletes, schema migration, rest-timer persistence and its tab-bar countdown, editing a finished workout, tonnage-chart gap filling, the backup reminder, accordion state, dialog semantics and accessible names on icon-only buttons. |
 | `check-assets.mjs` | Every source file is listed in the service worker cache and every listed asset exists; the entry `<script type="module">` carries no query string; `package.json`, `APP_VERSION` and `CHANGELOG.md` agree on the version. |
 
 `render-test.mjs` matters more than it looks: it is the reason a view refactor cannot silently ship a blank screen without a browser in the loop.

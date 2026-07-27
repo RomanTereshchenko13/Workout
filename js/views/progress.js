@@ -1,9 +1,10 @@
-import { h, card, btn, stat, kg, weightChart, barChart, fmtDate, fmtDateFull, relDay, fmtDuration, sheet, plural, confirmSheet, toast, segmented } from '../ui.js';
+import { h, card, btn, stat, kg, weightChart, barChart, fmtDate, fmtDateFull, relDay, fmtDuration, sheet, plural, confirmSheet, toast, segmented, accordion } from '../ui.js';
 import { get, deleteLog, deleteWeight } from '../store.js';
 import { EXERCISES } from '../data/exercises.js';
 import { dayByKey } from '../data/program.js';
 import { weightTrend, changeOverDays, e1rm, forecast } from '../lib/nutrition.js';
-import { liftedPerRep } from '../lib/plates.js';
+import { liftedPerRep, totalVolume } from '../lib/plates.js';
+import { daysAgoISO, mondayOfISO } from '../lib/dates.js';
 import { weighSheet } from './home.js';
 
 let tab = 'weight';
@@ -67,7 +68,7 @@ function signed(v) {
 }
 
 function cardioCard(cardio) {
-  const last14 = cardio.filter((c) => c.d >= new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10));
+  const last14 = cardio.filter((c) => c.d >= daysAgoISO(14));
   const totalMin = last14.reduce((a, c) => a + c.minutes, 0);
   return card({},
     h('h3', {}, 'Кардіо за 2 тижні'),
@@ -84,15 +85,19 @@ function cardioCard(cardio) {
 }
 
 function weightLogCard(weights) {
-  return h('details', { class: 'card accordion' },
-    h('summary', {}, h('strong', {}, 'Усі заміри'), h('span', { class: 'muted small' }, ` ${weights.length}`)),
+  return accordion('progress-weights',
+    [h('strong', {}, 'Усі заміри'), h('span', { class: 'muted small' }, ` ${weights.length}`)],
     h('ul', { class: 'log-list' },
       [...weights].reverse().map((w) =>
         h('li', {},
           h('span', {}, fmtDateFull(w.d)),
           h('span', {},
             h('strong', {}, kg(w.kg)),
-            h('button', { class: 'link-btn', onclick: () => confirmSheet('Видалити замір?', `${fmtDate(w.d)} — ${kg(w.kg)}`, () => { deleteWeight(w.d); toast('Видалено'); }, 'Видалити') }, '✕'),
+            h('button', {
+              class: 'link-btn',
+              'aria-label': `Видалити замір ${fmtDate(w.d)}`,
+              onclick: () => confirmSheet('Видалити замір?', `${fmtDate(w.d)} — ${kg(w.kg)}`, () => { deleteWeight(w.d); toast('Видалено'); }, 'Видалити'),
+            }, '✕'),
           ),
         ),
       ),
@@ -158,19 +163,8 @@ function buildRecords(logs) {
 function weeklyVolume(logs) {
   const buckets = new Map();
   for (const log of logs) {
-    const dt = new Date(`${log.date}T12:00:00`);
-    const monday = new Date(dt);
-    monday.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
-    const key = monday.toISOString().slice(0, 10);
-    let vol = 0;
-    for (const e of log.exercises || []) {
-      const meta = EXERCISES[e.id];
-      const mode = meta?.mode === 'pair' ? 'pair' : 'single';
-      for (const s of e.sets || []) {
-        if (s.done && s.kg) vol += liftedPerRep(s.kg, mode) * (e.isTime ? 1 : s.reps || 0);
-      }
-    }
-    buckets.set(key, (buckets.get(key) || 0) + vol);
+    const key = mondayOfISO(log.date);
+    buckets.set(key, (buckets.get(key) || 0) + totalVolume(log.exercises || []));
   }
   const arr = [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-8);
   return arr.map(([d, v], i, all) => ({
@@ -204,24 +198,26 @@ function historyTab(d) {
     ...[...logs].reverse().map((log) => {
       const day = dayByKey(log.dayKey);
       const done = (log.exercises || []).reduce((a, e) => a + (e.sets || []).filter((s) => s.done).length, 0);
-      let vol = 0;
-      for (const e of log.exercises || []) {
-        const mode = EXERCISES[e.id]?.mode === 'pair' ? 'pair' : 'single';
-        for (const s of e.sets || []) if (s.done && s.kg) vol += liftedPerRep(s.kg, mode) * (e.isTime ? 1 : s.reps || 0);
-      }
+      const vol = totalVolume(log.exercises || []);
       return card({ class: 'hist-card', style: { '--day-color': day.color } },
         h('div', { class: 'row-between' },
           h('div', {},
             h('div', { class: 'eyebrow' }, `${fmtDateFull(log.date)} · тиждень ${log.week}`),
             h('h3', {}, day.title),
           ),
-          h('button', { class: 'link-btn', onclick: () => confirmSheet('Видалити запис?', `${day.title}, ${fmtDate(log.date)}`, () => { deleteLog(log.id); toast('Видалено'); }, 'Видалити') }, '✕'),
+          h('button', {
+            class: 'link-btn',
+            'aria-label': `Видалити тренування ${fmtDate(log.date)}`,
+            onclick: () => confirmSheet('Видалити запис?', `${day.title}, ${fmtDate(log.date)}`, () => { deleteLog(log.id); toast('Видалено'); }, 'Видалити'),
+          }, '✕'),
         ),
         h('div', { class: 'hist-meta' },
           h('span', {}, `${done} підходів`),
           h('span', {}, fmtDuration(log.durationSec)),
           h('span', {}, `${Math.round(vol)} кг`),
-          log.finisherDone ? h('span', { class: 'tag-hot' }, 'фінішер ✓') : null,
+          log.finisherRounds
+            ? h('span', { class: 'tag-hot' }, `фінішер ${log.finisherRounds}/${log.finisherTarget || log.finisherRounds}`)
+            : log.finisherDone ? h('span', { class: 'tag-hot' }, 'фінішер ✓') : null,
         ),
         h('details', {},
           h('summary', { class: 'muted small' }, 'деталі'),

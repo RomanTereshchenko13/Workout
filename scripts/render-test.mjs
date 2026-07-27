@@ -40,6 +40,20 @@ function makeElement(tag, ns) {
     removeChild(child) { this.children = this.children.filter((c) => c !== child); return child; },
     remove() { this.parentNode?.removeChild(this); },
     insertBefore(child) { this.children.unshift(child); return child; },
+    // In-place swap is how the session screen refreshes a single card without
+    // rebuilding the view, so the stub has to model it.
+    replaceChild(next, old) {
+      const i = this.children.indexOf(old);
+      if (i === -1) return old;
+      this.children[i] = next;
+      next.parentNode = this;
+      old.parentNode = null;
+      return old;
+    },
+    contains(node) {
+      if (node === this) return true;
+      return (this.children || []).some((c) => c.contains?.(node));
+    },
     setAttribute(k, v) { this.attributes[k] = String(v); },
     getAttribute(k) { return this.attributes[k] ?? null; },
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
@@ -48,6 +62,7 @@ function makeElement(tag, ns) {
     click() { (this.listeners.click || []).forEach((fn) => fn({ target: this, preventDefault() {} })); },
     focus() {},
     querySelector() { return null; },
+    querySelectorAll() { return []; },
     get firstChild() { return this.children[0] || null; },
     get textContent() { return this.children.map((c) => c.textContent ?? '').join(''); },
     set textContent(v) { this.children = [makeText(v)]; },
@@ -283,6 +298,108 @@ picked = null;
 segs[1].click();
 ok(picked === null, 're-clicking the active segment does not fire a redundant change');
 
+// ── Session structure: supersets, substitution, finisher rounds ──
+// The `ss` field sat in the program data from day one with nothing rendering it,
+// so paired work was performed — and rested — as if the exercises were unrelated.
+console.log('\nSession structure');
+
+/** Collect every node carrying a class, so structure can be asserted on. */
+function findByClass(node, cls, acc = []) {
+  if (node.classList?.contains?.(cls)) acc.push(node);
+  for (const c of node.children || []) findByClass(c, cls, acc);
+  return acc;
+}
+
+const supersetDay = [0, 1, 2].find((rotation) => {
+  const s = store.get();
+  return buildSession({ rotation, week: 1, history: [], inventory: s.inventory, experience: 'beginner' })
+    .exercises.some((e) => e.ss);
+});
+ok(supersetDay !== undefined, 'at least one training day declares a superset');
+
+const sState = store.get();
+store.startSession(buildSession({
+  rotation: supersetDay, week: 1, history: sState.logs, inventory: sState.inventory, experience: 'beginner',
+}));
+const sessionNode = views.session();
+const supersetBlocks = findByClass(sessionNode, 'superset');
+ok(supersetBlocks.length >= 1, 'the session screen renders a superset block', String(supersetBlocks.length));
+ok(supersetBlocks.every((b) => findByClass(b, 'ex-card').length >= 2), 'each superset block contains at least two exercise cards');
+ok(walk(sessionNode).text.join(' ').includes('Суперсет'), 'the superset is labelled for the user');
+
+const roundChips = findByClass(sessionNode, 'round-chip');
+ok(roundChips.length >= 3, 'the finisher offers one chip per round', String(roundChips.length));
+ok(store.get().active.finisherRounds === 0, 'a new session starts with no finisher rounds');
+roundChips[1].click();
+ok(store.get().active.finisherRounds === 2, 'tapping the second chip records two rounds', String(store.get().active.finisherRounds));
+const finisherRounds = store.get().active.finisherRounds;
+ok(store.get().active.finisherTarget >= finisherRounds, 'the round target is recorded alongside the count');
+
+// Substitution applied mid-session must survive into history and the next plan.
+store.setSubstitution('ohp', 'arnold');
+ok(store.get().substitutions.ohp === 'arnold', 'a permanent substitution is stored');
+const subbed = buildSession({
+  rotation: 0, week: 1, history: [], inventory: store.get().inventory,
+  experience: 'beginner', substitutions: store.get().substitutions,
+});
+ok(subbed.exercises.some((e) => e.id === 'arnold' && e.slotId === 'ohp'), 'the next session plans the substitute');
+store.setSubstitution('ohp', null);
+ok(store.get().substitutions.ohp === undefined, 'a substitution can be undone');
+
+store.updateActive((a) => a.exercises.forEach((e) => e.sets.forEach((set) => { set.done = true; set.reps = e.target.low; })));
+store.finishSession();
+const finisherLog = store.get().logs[store.get().logs.length - 1];
+ok(finisherLog.finisherRounds === finisherRounds, 'finisher rounds land in history', String(finisherLog.finisherRounds));
+ok(finisherLog.finisherDone === true, 'the legacy finisherDone flag stays consistent with the count');
+ok((finisherLog.exercises || []).every((e) => typeof e.perSide === 'boolean'), 'every logged exercise records its perSide flag');
+
+// ── Accordions keep their state across a re-render ──
+// Views are rebuilt wholesale on every state change, which used to snap the
+// warm-up list shut on every logged set.
+console.log('\nAccordion state');
+const { accordion } = await import('../js/ui.js');
+const acc1 = accordion('test-key', makeElement('strong'), makeElement('p'));
+ok(acc1.getAttribute('open') === null, 'an accordion starts closed');
+acc1.open = true;
+(acc1.listeners.toggle || []).forEach((fn) => fn());
+const acc2 = accordion('test-key', makeElement('strong'), makeElement('p'));
+ok(acc2.getAttribute('open') === 'true', 'a rebuilt accordion reopens if it was open', String(acc2.getAttribute('open')));
+const other = accordion('other-key', makeElement('strong'));
+ok(other.getAttribute('open') === null, 'state is keyed, not global');
+
+// ── Sheets are real dialogs ──
+console.log('\nDialog semantics');
+const { sheet } = await import('../js/ui.js');
+const closeSheet = sheet('Заголовок', makeElement('p'), [{ label: 'Ок', variant: 'primary' }]);
+const wraps = document.body.children.filter((c) => c.classList?.contains?.('sheet-wrap'));
+ok(wraps.length >= 1, 'the sheet is mounted on the body');
+const panel = wraps[wraps.length - 1].children[0];
+ok(panel.getAttribute('role') === 'dialog', 'the sheet announces itself as a dialog');
+ok(panel.getAttribute('aria-modal') === 'true', 'the sheet is modal');
+const labelledBy = panel.getAttribute('aria-labelledby');
+ok(!!labelledBy, 'the dialog points at its own title');
+ok(walk(panel).text.join(' ').includes('Заголовок'), 'the title is rendered');
+ok(typeof closeSheet === 'function', 'sheet returns a close handle');
+closeSheet();
+
+// ── Icon-only controls have accessible names ──
+console.log('\nAccessible names');
+function unnamedIconButtons(node, acc = []) {
+  if (node.tagName === 'BUTTON') {
+    const text = walk(node).text.join('').trim();
+    const named = node.getAttribute('aria-label') || node.getAttribute('title');
+    // A control whose whole label is a glyph is unusable without a spoken name.
+    if (!named && text.length > 0 && text.length <= 2 && !/[а-яїієґa-z0-9]/i.test(text)) acc.push(text);
+  }
+  for (const c of node.children || []) unnamedIconButtons(c, acc);
+  return acc;
+}
+for (const [name, fn] of Object.entries(views)) {
+  if (name === 'session') continue;
+  const missing = unnamedIconButtons(fn());
+  ok(missing.length === 0, `${name}: every icon-only button has an accessible name`, missing.join(' '));
+}
+
 // ── Install flow ──
 // Every branch here was a bug at some point: the card told a user who had just
 // installed the app to install it, a spent prompt event was re-used, and an
@@ -332,15 +449,140 @@ ok(!installedHome.text.join(' ').includes('зараз працює як сайт
 
 // ── Persistence round-trip ──
 console.log('\nPersistence');
+const logCount = store.get().logs.length;
+ok(logCount >= 4, 'the run so far produced a history to round-trip', String(logCount));
 const dump = store.exportJSON();
 ok(dump.includes('"logs"') && dump.length > 500, 'export produces a full JSON dump');
 store.resetAll();
 ok(store.get().logs.length === 0, 'reset clears history');
 store.importJSON(dump);
-ok(store.get().logs.length === 4 && store.get().weights.length > 10, 'import restores history and weigh-ins');
+ok(store.get().logs.length === logCount && store.get().weights.length > 10, 'import restores history and weigh-ins');
 let threw = false;
 try { store.importJSON('{"nope":1}'); } catch { threw = true; }
 ok(threw, 'import rejects a file that is not a backup');
+
+// A backup whose arrays are the wrong shape used to sail through and then throw
+// somewhere deep inside a view, long after the import reported success.
+for (const bad of ['{"profile":{},"logs":"nope"}', '{"profile":{},"weights":{}}', '{"profile":{},"cardio":5}']) {
+  let rejected = false;
+  try { store.importJSON(bad); } catch { rejected = true; }
+  ok(rejected, `import rejects a corrupt backup: ${bad.slice(0, 32)}`);
+}
+let arrayRejected = false;
+try { store.importJSON('[]'); } catch { arrayRejected = true; }
+ok(arrayRejected, 'import rejects a bare array');
+ok(store.get().logs.length === logCount, 'a rejected import leaves the existing data untouched');
+
+// ── Log identity ──
+// Ids used to be `${date}-${dayKey}-${logs.length + 1}`, so deleting one made the
+// next workout reuse a live id — and then one delete removed two workouts.
+console.log('\nLog identity');
+const idsBefore = store.get().logs.map((l) => l.id);
+ok(new Set(idsBefore).size === idsBefore.length, 'existing log ids are unique');
+
+const restart = () => {
+  const s = store.get();
+  store.startSession(buildSession({
+    rotation: s.state.rotation, week: s.state.week, history: s.logs,
+    inventory: s.inventory, experience: s.profile.experience,
+  }));
+  store.updateActive((a) => a.exercises.forEach((e) => e.sets.forEach((set) => { set.done = true; set.reps = e.target.low; })));
+  store.finishSession();
+};
+
+// Every id this store has ever issued, including ones since deleted. The old
+// scheme drew from `logs.length + 1`, so a delete put a live number back in the
+// pool — reissue it and one tap on ✕ removed two workouts.
+const everIssued = new Set(idsBefore);
+
+store.deleteLog(idsBefore[1]);
+ok(store.get().logs.length === idsBefore.length - 1, 'deleting one log removes exactly one', String(store.get().logs.length));
+
+// Delete from the end too: that is the case the length-based scheme reused first.
+store.deleteLog(idsBefore[idsBefore.length - 1]);
+for (let i = 0; i < 4; i++) {
+  restart();
+  const issued = store.get().logs[store.get().logs.length - 1].id;
+  ok(!everIssued.has(issued), `a workout logged after deletions gets a brand-new id (${issued})`);
+  everIssued.add(issued);
+}
+
+const ids = store.get().logs.map((l) => l.id);
+ok(new Set(ids).size === ids.length, 'ids stay unique after deletes followed by new workouts', ids.join(' | '));
+
+// The payoff: deleting any single log must remove exactly that log.
+const before = store.get().logs.length;
+const victim = ids[Math.floor(ids.length / 2)];
+store.deleteLog(victim);
+ok(store.get().logs.length === before - 1, 'deleting a log removes exactly one, never a colliding pair', String(store.get().logs.length));
+ok(!store.get().logs.some((l) => l.id === victim), 'the deleted log is the one that was asked for');
+
+// ── Tonnage counts unilateral work twice ──
+console.log('\nTonnage in logs');
+const { totalVolume } = await import('../js/lib/plates.js');
+const withPerSide = store.get().logs.flatMap((l) => l.exercises).filter((e) => e.perSide);
+ok(withPerSide.length > 0, 'finished logs record which exercises are per side', String(withPerSide.length));
+const sample = { mode: 'single', perSide: true, sets: [{ done: true, kg: 10, reps: 8 }] };
+ok(totalVolume([sample]) === 160, 'a logged per-side set is worth both sides');
+
+// A pre-v4 backup has no perSide flags at all; the migration must add them back
+// so old workouts and new ones are measured the same way.
+const legacy = JSON.stringify({
+  v: 3,
+  profile: { ...store.get().profile },
+  logs: [{
+    id: 'x', date: '2026-07-01', dayKey: 'A', week: 1, durationSec: 100,
+    exercises: [{ id: 'reverse-lunge', mode: 'pair', sets: [{ kg: 8, reps: 10, done: true }] }],
+  }],
+  weights: [], cardio: [],
+});
+const keep = store.exportJSON();
+store.importJSON(legacy);
+const migrated = store.get().logs[0].exercises[0];
+ok(migrated.perSide === true, 'the v4 migration backfills perSide on a unilateral exercise');
+ok(totalVolume(store.get().logs[0].exercises) === 8 * 2 * 10 * 2, 'migrated history reports the corrected tonnage');
+ok(store.get().v === 4, 'the imported blob is stamped with the current schema');
+store.importJSON(keep);
+
+// ── Backup reminder ──
+console.log('\nBackup reminder');
+const fresh = store.backupStatus();
+ok(fresh.never === true, 'a store that has never been exported says so');
+ok(fresh.due === true, 'with history on board the reminder is due');
+store.markBackedUp();
+const after2 = store.backupStatus();
+ok(after2.never === false && after2.days === 0 && after2.unsaved === 0, 'exporting clears the reminder');
+ok(after2.due === false, 'the reminder does not nag straight after a backup');
+restart();
+ok(store.backupStatus().unsaved === 1, 'a workout logged after the backup is counted as unsaved');
+
+// ── Rest timer survives being killed ──
+console.log('\nRest timer persistence');
+const { restTimer } = await import('../js/lib/timer.js');
+const paused = restTimer(90, { startAt: 45, paused: true });
+ok(paused.left === 45 && paused.running === false && paused.total === 90, 'a timer can be restored paused, part-way through');
+paused.add(15);
+ok(paused.left === 60, 'add() extends a restored timer');
+paused.skip();
+ok(paused.left === 0 && paused.running === false, 'skip() ends it');
+
+let saved = null;
+const live = restTimer(60, { onChange: (t) => { saved = { left: t.left, total: t.total, paused: !t.running }; } });
+ok(saved && saved.left === 60 && saved.total === 60 && saved.paused === false, 'onChange publishes the deadline as soon as the timer starts');
+live.toggle();
+ok(saved.paused === true, 'pausing is published so a reload restores it paused');
+live.stop();
+
+store.startSession(buildSession({
+  rotation: 0, week: 1, history: [], inventory: store.get().inventory, experience: 'beginner',
+}));
+store.saveRest({ endsAt: Date.now() + 45000, total: 90, paused: false, left: 45 });
+ok(store.get().active.rest.total === 90, 'the rest deadline is stored on the active session');
+const reloaded = JSON.parse(store.exportJSON());
+ok(reloaded.active.rest.left === 45, 'the rest deadline survives an export/reload round trip');
+store.saveRest(null);
+ok(store.get().active.rest === null, 'clearing the rest timer clears the stored deadline');
+store.discardSession();
 
 console.log(`\n${failed ? '✗' : '✓'} ${passed} checks passed, ${failed} failed (${nodesCreated} DOM nodes built)\n`);
 process.exit(failed ? 1 : 0);

@@ -1,6 +1,7 @@
-import { h, card, btn, field, num, select, segmented, toast, confirmSheet, sheet, kg, stat } from '../ui.js';
-import { get, saveProfile, saveSettings, exportJSON, importJSON, resetAll, update } from '../store.js';
+import { h, card, btn, field, num, select, segmented, toast, confirmSheet, sheet, stat } from '../ui.js';
+import { get, saveProfile, saveSettings, exportJSON, importJSON, resetAll, update, markBackedUp, backupStatus, clearSubstitutions, setSubstitution, today } from '../store.js';
 import { ACTIVITY, bmr, tdee, calorieTarget, macroTargets, forecast } from '../lib/nutrition.js';
+import { EXERCISES } from '../data/exercises.js';
 import { APP_VERSION, checkForUpdate, installDiagnostics } from '../app.js';
 
 export function profileView() {
@@ -12,9 +13,36 @@ export function profileView() {
     profileCard(p),
     goalCard(p),
     settingsCard(d.settings),
+    substitutionsCard(d),
     programStateCard(d),
-    dataCard(),
+    dataCard(d),
     aboutCard(),
+  );
+}
+
+/** Permanent exercise swaps, listed so they can be found and undone. */
+function substitutionsCard(d) {
+  const entries = Object.entries(d.substitutions || {});
+  if (!entries.length) return null;
+  return card({},
+    h('h3', {}, 'Заміни вправ'),
+    h('ul', { class: 'log-list' },
+      entries.map(([slotId, exId]) =>
+        h('li', {},
+          h('span', {}, `${EXERCISES[slotId]?.name || slotId} → `, h('strong', {}, EXERCISES[exId]?.name || exId)),
+          h('button', {
+            class: 'link-btn',
+            'aria-label': `Скасувати заміну для «${EXERCISES[slotId]?.name || slotId}»`,
+            onclick: () => { setSubstitution(slotId, null); toast('Заміну скасовано'); rerender(); },
+          }, '✕'),
+        ),
+      ),
+    ),
+    btn('Скинути всі заміни', {
+      variant: 'ghost', class: 'btn-block',
+      onClick: () => { clearSubstitutions(); toast('Програма повернулась до базової'); rerender(); },
+    }),
+    h('p', { class: 'note' }, 'Заміну можна поставити просто під час тренування — кнопка ⇄ на картці вправи.'),
   );
 }
 
@@ -103,12 +131,17 @@ function programStateCard(d) {
   );
 }
 
-function dataCard() {
-  return card({},
+function dataCard(d) {
+  const b = backupStatus();
+  return card({ class: b.due ? 'card-warn' : '' },
     h('h3', {}, 'Дані'),
     h('p', { class: 'muted small' }, 'Усе зберігається лише на цьому телефоні. Роби бекап перед зміною пристрою або очищенням даних браузера.'),
+    h('p', { class: 'note' },
+      b.never
+        ? `Бекапу ще не було. У пам’яті: ${d.logs.length} тренувань, ${d.weights.length} замірів ваги.`
+        : `Останній бекап: ${b.days === 0 ? 'сьогодні' : `${b.days} дн. тому`}${b.unsaved ? `, після нього ${b.unsaved} нових тренувань` : ''}.`),
     h('div', { class: 'row-gap' },
-      btn('Експорт у файл', { variant: 'ghost', onClick: doExport }),
+      btn('Експорт у файл', { variant: b.due ? 'primary' : 'ghost', onClick: doExport }),
       btn('Імпорт з файлу', { variant: 'ghost', onClick: doImport }),
     ),
     btn('Скинути всі дані', {
@@ -126,12 +159,14 @@ function dataCard() {
 function doExport() {
   const blob = new Blob([exportJSON()], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const a = h('a', { href: url, download: `workout-backup-${new Date().toISOString().slice(0, 10)}.json` });
+  const a = h('a', { href: url, download: `workout-backup-${today()}.json` });
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  markBackedUp();
   toast('Файл збережено');
+  rerender();
 }
 
 function doImport() {

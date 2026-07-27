@@ -1,19 +1,20 @@
-import { h, card, btn, stat, kg, fmtDuration, relDay, plural, ring, sheet, num, field, toast } from '../ui.js';
-import { get, startSession, logWeight, today, logCardio } from '../store.js';
-import { buildSession, dayByRotation, waveOf, CARDIO, WEEK_TEMPLATE } from '../data/program.js';
-import { describeLoad, shortLoad } from '../lib/plates.js';
+import { h, card, btn, stat, kg, fmtDuration, relDay, plural, ring, sheet, num, field, toast, accordion } from '../ui.js';
+import { get, startSession, logWeight, today, logCardio, backupStatus } from '../store.js';
+import { buildSession, waveOf, CARDIO, WEEK_TEMPLATE } from '../data/program.js';
 import { macroTargets, calorieTarget, changeOverDays, weightTrend, forecast, sessionKcal } from '../lib/nutrition.js';
+import { mondayOfISO, addDaysISO } from '../lib/dates.js';
 import { go, installState, promptInstall, isIOS } from '../app.js';
 
 export function homeView() {
   const d = get();
-  const { profile, logs, state, inventory, active } = d;
+  const { profile, logs, state, inventory, active, substitutions } = d;
   const plan = buildSession({
     rotation: state.rotation,
     week: state.week,
     history: logs,
     inventory,
     experience: profile.experience,
+    substitutions,
   });
   const wave = waveOf(state.week);
   const macros = macroTargets(profile);
@@ -22,12 +23,32 @@ export function homeView() {
   return h('div', { class: 'view' },
     header(profile, logs),
     installCard(),
+    backupCard(),
     active ? activeBanner(active) : nextWorkoutCard(plan, wave),
     weightCard(d),
     todayTargets(macros, cal, profile),
     streakCard(logs),
     weekPlanCard(state),
     equipmentNote(inventory),
+  );
+}
+
+/**
+ * Everything lives in localStorage, which browsers evict without warning — iOS
+ * clears it for a non-installed site after about a week of disuse. Export has
+ * always existed; nothing ever suggested using it, so nobody did.
+ */
+function backupCard() {
+  const b = backupStatus();
+  if (!b.due) return null;
+  return card({ class: 'card-warn' },
+    h('div', { class: 'eyebrow' }, 'Резервна копія'),
+    h('h3', {}, b.never ? 'Історія ще жодного разу не збережена' : `Копії вже ${b.days} ${plural(b.days, 'день', 'дні', 'днів')}`),
+    h('p', { class: 'muted small' },
+      b.unsaved
+        ? `${b.unsaved} ${plural(b.unsaved, 'тренування', 'тренування', 'тренувань')} існує лише в пам’яті цього браузера. Очищення даних або переустановка — і вони зникнуть.`
+        : 'Дані живуть лише в пам’яті цього браузера. Очищення даних або переустановка — і вони зникнуть.'),
+    btn('Зберегти бекап', { variant: 'primary', class: 'btn-block', onClick: () => go('#/profile') }),
   );
 }
 
@@ -76,8 +97,8 @@ function installCard() {
   }
 
   // No programmatic prompt: iOS Safari never offers one, and Chrome needs the menu.
-  return h('details', { class: 'card accordion' },
-    h('summary', {}, h('strong', {}, '📲 Встановити як застосунок'), h('span', { class: 'muted small' }, ' зараз працює як сайт')),
+  return accordion('home-install',
+    [h('strong', {}, '📲 Встановити як застосунок'), h('span', { class: 'muted small' }, ' зараз працює як сайт')],
     isIOS()
       ? h('div', {},
           h('p', { class: 'muted small' }, 'На iPhone встановлює лише Safari — у Chrome цієї можливості немає.'),
@@ -111,15 +132,25 @@ function header(profile, logs) {
 }
 
 function activeBanner(active) {
-  const mins = Math.round((Date.now() - active.startedAt) / 60000);
   const done = active.exercises.reduce((a, e) => a + e.sets.filter((s) => s.done).length, 0);
   const total = active.exercises.reduce((a, e) => a + e.sets.length, 0);
+  const elapsed = () => fmtDuration(Math.max(0, Math.round((Date.now() - active.startedAt) / 1000)));
+  const line = h('p', { class: 'muted' }, `${elapsed()} · ${done}/${total} підходів`);
+
+  // A workout in progress needs a clock that moves, not a number sampled at the
+  // moment of the last repaint.
+  const id = setInterval(() => {
+    if (line.isConnected === false) return clearInterval(id);
+    line.textContent = `${elapsed()} · ${done}/${total} підходів`;
+  }, 1000);
+  id?.unref?.();
+
   return card({ class: 'card-accent' },
     h('div', { class: 'row-between' },
       h('div', {},
         h('div', { class: 'eyebrow' }, 'Тренування триває'),
         h('h2', {}, `День ${active.dayKey}`),
-        h('p', { class: 'muted' }, `${mins} хв · ${done}/${total} підходів`),
+        line,
       ),
       btn('Продовжити', { variant: 'primary', onClick: () => go('#/session') }),
     ),
@@ -273,17 +304,16 @@ function streakCard(logs) {
 function weekPlanCard(state) {
   const d = get();
   const doneDates = new Set(d.logs.map((l) => l.date));
-  const monday = new Date();
-  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
   const todayISO = today();
+  // Local calendar dates throughout: building these through toISOString() put
+  // "today" on the previous day whenever the app was opened before ~03:00.
+  const monday = mondayOfISO(todayISO);
 
   return card({},
     h('div', { class: 'row-between' }, h('h3', {}, 'Тиждень'), h('span', { class: 'muted small' }, waveOf(state.week).label)),
     h('div', { class: 'week-grid' },
       WEEK_TEMPLATE.map((slot, i) => {
-        const date = new Date(monday);
-        date.setDate(monday.getDate() + i);
-        const iso = date.toISOString().slice(0, 10);
+        const iso = addDaysISO(monday, i);
         const isDone = doneDates.has(iso);
         const isToday = iso === todayISO;
         return h('div', { class: `week-cell kind-${slot.kind} ${isDone ? 'is-done' : ''} ${isToday ? 'is-today' : ''}` },
@@ -297,7 +327,7 @@ function weekPlanCard(state) {
       CARDIO.slice(0, 3).map((c) =>
         h('button', { class: 'cardio-item', onclick: () => cardioSheet(c) },
           h('div', {}, h('strong', {}, c.title), h('p', { class: 'muted small' }, c.detail)),
-          h('span', { class: 'chev' }, '›'),
+          h('span', { class: 'chev', 'aria-hidden': 'true' }, '›'),
         ),
       ),
     ),

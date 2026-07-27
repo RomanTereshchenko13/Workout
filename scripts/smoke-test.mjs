@@ -11,10 +11,15 @@
 import {
   achievableLoads, nearestLoad, nextLoadUp, nextLoadDown, maxLoad,
   describeLoad, fitsInventory, plateUsage, DEFAULT_INVENTORY,
+  setVolume, exerciseVolume, totalVolume,
 } from '../js/lib/plates.js';
 import { EXERCISES, WARMUP, COOLDOWN, GROUPS } from '../js/data/exercises.js';
-import { DAYS, buildSession, waveOf, suggestWeight, WAVES } from '../js/data/program.js';
+import {
+  DAYS, buildSession, waveOf, suggestWeight, WAVES,
+  resolveSlot, alternativesFor, groupExercises,
+} from '../js/data/program.js';
 import { bmr, tdee, calorieTarget, macroTargets, weightTrend, changeOverDays, e1rm, forecast } from '../js/lib/nutrition.js';
+import { isoDate, parseISO, daysAgoISO, addDaysISO, mondayOfISO, daysBetween } from '../js/lib/dates.js';
 
 let failed = 0;
 let passed = 0;
@@ -218,6 +223,150 @@ group('Nutrition math', () => {
   const f = forecast(p);
   ok(f && f.weeks > 0 && f.kgPerWeek > 0 && /^\d{4}-\d{2}-\d{2}$/.test(f.dateISO), 'forecast returns weeks, rate and a date');
   ok(forecast({ ...p, goalWeightKg: 85 }) === null, 'no forecast without a deficit');
+});
+
+/* ─────────── Calendar dates ─────────── */
+
+group('Local calendar dates', () => {
+  // Forced to the app's actual timezone. CI runs in UTC, where the bug this
+  // module fixes cannot reproduce at all — an assertion that only holds in UTC
+  // would be a guard that never guards anything.
+  process.env.TZ = 'Europe/Kyiv';
+  const offsetMin = -new Date(2026, 6, 27, 12).getTimezoneOffset();
+  ok(offsetMin === 180, 'the suite runs the date checks in Europe/Kyiv (UTC+3 in July)', `${offsetMin} min`);
+
+  ok(isoDate(new Date(2026, 6, 27, 13, 30)) === '2026-07-27', 'isoDate reads local calendar fields');
+  // The regression this module exists for: a Date at local midnight converted
+  // through UTC lands on the previous day anywhere east of Greenwich.
+  const earlyMorning = new Date(2026, 6, 27, 0, 30);
+  ok(isoDate(earlyMorning) === '2026-07-27', 'a time just after local midnight still reports today');
+  ok(earlyMorning.toISOString().slice(0, 10) === '2026-07-26',
+    'and toISOString really would have reported yesterday — this is the bug being guarded',
+    earlyMorning.toISOString());
+  ok(isoDate(new Date(2026, 6, 27, 23, 59)) === '2026-07-27', 'a time just before local midnight still reports today');
+  ok(isoDate(new Date(2026, 0, 1, 2, 0)) === '2026-01-01', 'new year at 02:00 local is 1 January, not 31 December');
+
+  const p = parseISO('2026-07-27');
+  ok(p.getFullYear() === 2026 && p.getMonth() === 6 && p.getDate() === 27, 'parseISO round-trips through local fields');
+  ok(p.getHours() === 12, 'parseISO anchors at noon so DST cannot shift the day');
+  ok(isoDate(parseISO('2026-03-29')) === '2026-03-29', 'a DST spring-forward date survives the round trip');
+  ok(isoDate(parseISO('2026-10-25')) === '2026-10-25', 'a DST fall-back date survives the round trip');
+
+  ok(addDaysISO('2026-07-27', 5) === '2026-08-01', 'addDaysISO crosses a month boundary');
+  ok(addDaysISO('2026-12-30', 3) === '2027-01-02', 'addDaysISO crosses a year boundary');
+  ok(addDaysISO('2026-03-01', -1) === '2026-02-28', 'addDaysISO steps backwards');
+
+  ok(mondayOfISO('2026-07-27') === '2026-07-27', 'Monday maps to itself');
+  ok(mondayOfISO('2026-07-26') === '2026-07-20', 'Sunday belongs to the week that started six days earlier');
+  ok(mondayOfISO('2026-08-01') === '2026-07-27', 'Saturday maps back to its Monday');
+  for (let i = 0; i < 7; i++) {
+    const day = addDaysISO('2026-07-27', i);
+    ok(mondayOfISO(day) === '2026-07-27', `every day of the week resolves to the same Monday (${day})`);
+  }
+
+  ok(daysBetween('2026-07-20', '2026-07-27') === 7, 'daysBetween counts forward');
+  ok(daysBetween('2026-07-27', '2026-07-20') === -7, 'daysBetween counts backward');
+  ok(daysBetween('2026-03-28', '2026-03-30') === 2, 'daysBetween is unaffected by a DST change');
+  ok(daysAgoISO(0) === isoDate(), 'daysAgoISO(0) is today');
+  ok(daysBetween(daysAgoISO(14), isoDate()) === 14, 'daysAgoISO(14) really is fourteen days back');
+  ok(daysBetween(isoDate(), daysAgoISO(-30)) === 30, 'a negative argument looks forward');
+});
+
+/* ─────────── Tonnage ─────────── */
+
+group('Tonnage', () => {
+  const pair = { mode: 'pair' };
+  const single = { mode: 'single' };
+
+  ok(setVolume({ done: true, kg: 10, reps: 8 }, pair) === 160, 'a pair of dumbbells counts both hands (10×2×8)');
+  ok(setVolume({ done: true, kg: 10, reps: 8 }, single) === 80, 'a single dumbbell counts once');
+  ok(setVolume({ done: false, kg: 10, reps: 8 }, pair) === 0, 'an unlogged set contributes nothing');
+  ok(setVolume({ done: true, kg: 0, reps: 8 }, pair) === 0, 'bodyweight work contributes no tonnage');
+  ok(setVolume({ done: true, kg: 12, reps: 0 }, { mode: 'single', isTime: true }) === 12, 'a timed hold counts its load once');
+
+  // The bug this replaced: "8 reverse lunges" means 8 per leg, and counting it
+  // once halved the tonnage of every unilateral exercise in the program.
+  ok(setVolume({ done: true, kg: 10, reps: 8 }, { mode: 'single', perSide: true }) === 160,
+    'a per-side set counts both sides');
+  ok(setVolume({ done: true, kg: 10, reps: 8 }, { mode: 'single', perSide: true })
+    === 2 * setVolume({ done: true, kg: 10, reps: 8 }, single), 'per-side is exactly double the bilateral figure');
+
+  const ex = { mode: 'pair', sets: [{ done: true, kg: 10, reps: 8 }, { done: true, kg: 12, reps: 6 }, { done: false, kg: 12, reps: 6 }] };
+  ok(exerciseVolume(ex) === 160 + 144, 'exerciseVolume sums only completed sets');
+  ok(totalVolume([ex, ex]) === 2 * exerciseVolume(ex), 'totalVolume adds exercises up');
+  ok(totalVolume([]) === 0 && exerciseVolume({}) === 0, 'empty input is 0, not NaN');
+
+  // Every exercise the program prescribes must produce a finite, non-negative figure.
+  for (const day of DAYS) {
+    for (const slot of day.main) {
+      const meta = EXERCISES[slot.id];
+      const v = setVolume({ done: true, kg: 10, reps: 10 }, { mode: meta.mode, perSide: slot.perSide, isTime: slot.time });
+      ok(Number.isFinite(v) && v >= 0, `${slot.id}: tonnage is a sane number`, String(v));
+    }
+  }
+});
+
+/* ─────────── Supersets ─────────── */
+
+group('Superset grouping', () => {
+  const blocks = groupExercises([
+    { id: 'a', ss: null }, { id: 'b', ss: 1 }, { id: 'c', ss: 1 }, { id: 'd', ss: null },
+  ]);
+  ok(blocks.length === 3, 'consecutive slots sharing an ss value collapse into one block', String(blocks.length));
+  ok(blocks[1].items.length === 2 && blocks[1].ss === 1, 'the superset block holds both exercises');
+  ok(blocks[1].items.map((it) => it.i).join(',') === '1,2', 'original indexes survive grouping');
+  ok(blocks[0].ss === null && blocks[0].items.length === 1, 'ungrouped exercises stay alone');
+
+  // Same ss value but not adjacent must not be merged across the gap.
+  const split = groupExercises([{ ss: 1 }, { ss: null }, { ss: 1 }]);
+  ok(split.length === 3, 'non-adjacent slots with the same ss are not merged', String(split.length));
+  ok(groupExercises([]).length === 0, 'an empty session groups to nothing');
+
+  // Every day that declares supersets must actually produce one.
+  for (const day of DAYS) {
+    if (!day.main.some((s) => s.ss)) continue;
+    const session = buildSession({ rotation: DAYS.indexOf(day), week: 1, history: [], inventory: DEFAULT_INVENTORY, experience: 'beginner' });
+    const supersets = groupExercises(session.exercises).filter((b) => b.ss !== null);
+    ok(supersets.length >= 1, `day ${day.key} renders at least one superset`);
+    ok(supersets.every((b) => b.items.length >= 2), `day ${day.key} supersets pair at least two exercises`);
+  }
+});
+
+/* ─────────── Substitutions ─────────── */
+
+group('Exercise substitution', () => {
+  ok(resolveSlot('ohp', {}) === 'ohp', 'no substitution resolves to the original slot');
+  ok(resolveSlot('ohp', { ohp: 'arnold' }) === 'arnold', 'a substitution resolves to the replacement');
+  ok(resolveSlot('ohp', { ohp: 'not-a-real-exercise' }) === 'ohp', 'a bogus replacement falls back to the original');
+  ok(resolveSlot('ohp', { ohp: '' }) === 'ohp', 'an empty replacement falls back to the original');
+
+  const alts = alternativesFor('ohp');
+  ok(alts.length >= 3, `the overhead press has alternatives (${alts.length})`);
+  ok(alts.every((a) => a.id !== 'ohp'), 'an exercise is never its own alternative');
+  ok(alts.every((a) => EXERCISES[a.id].group === EXERCISES.ohp.group), 'alternatives share the muscle group');
+  ok(alts[0].sameMode, 'alternatives that load the same way are offered first');
+  ok(alternativesFor('nope').length === 0, 'an unknown exercise has no alternatives');
+
+  // Every slot in the program must have something to swap to, or the button lies.
+  for (const day of DAYS) {
+    for (const slot of day.main) {
+      ok(alternativesFor(slot.id).length >= 1, `${slot.id} has at least one alternative`);
+    }
+  }
+
+  const swapped = buildSession({
+    rotation: 0, week: 1, history: [], inventory: DEFAULT_INVENTORY,
+    experience: 'beginner', substitutions: { ohp: 'arnold' },
+  });
+  const slot = swapped.exercises.find((e) => e.slotId === 'ohp');
+  ok(slot && slot.id === 'arnold' && slot.substituted, 'buildSession honours a permanent substitution');
+  ok(slot.name === EXERCISES.arnold.name, 'the substituted exercise carries its own name');
+  ok(achievableLoads(DEFAULT_INVENTORY, slot.mode === 'pair' ? 'pair' : 'single').some((l) => l.kg === slot.suggested.kg),
+    'the substitute gets a weight that exists on the ladder', String(slot.suggested.kg));
+
+  const plain = buildSession({ rotation: 0, week: 1, history: [], inventory: DEFAULT_INVENTORY, experience: 'beginner' });
+  ok(plain.exercises.every((e) => e.slotId === e.id && !e.substituted), 'an unsubstituted session marks nothing as swapped');
+  ok(plain.exercises.length === swapped.exercises.length, 'substituting does not change the session shape');
 });
 
 /* ─────────── Result ─────────── */

@@ -49,6 +49,111 @@ deploy needs a new version.
 
 ---
 
+## 1.2.0
+
+New capability plus a batch of fixes, so MINOR by the table above. The tonnage
+correction changes what past workouts are worth — but it makes old logs agree
+with new ones rather than reinterpreting them, and the schema-4 migration is a
+pure backfill, so it stops short of MAJOR.
+
+### Added
+
+- **Exercise substitution.** The ⇄ button on any exercise card in a session
+  offers alternatives from the same muscle group — for today only, or
+  permanently. Permanent swaps live in `state.substitutions`, are honoured by
+  `buildSession()` from then on, and are listed and undoable in Профіль. The
+  library held 45 exercises while the program could only ever reach 29; "my
+  shoulder hurts on the overhead press" previously had no answer inside the app.
+- **Supersets are real now.** The `ss` field had been sitting in the program data
+  since the first release with nothing reading it, so exercises meant to be
+  paired were shown — and rested — as unrelated. They now render as one block,
+  and the rest timer only starts after the last exercise of a round.
+- **Finisher rounds are logged.** One chip per round instead of a single
+  all-or-nothing checkbox. The finisher is described in the app as the main
+  calorie block and was the least-tracked thing in it. History shows `3/4`.
+- **Backup reminder.** Everything lives in `localStorage`, which browsers evict
+  without warning — iOS clears it for a non-installed site after about a week of
+  disuse. Export has always existed; nothing ever suggested using it. A card
+  appears on the home screen once there is history worth losing, and Профіль
+  shows when the last backup was taken.
+- **The session clock ticks.** Elapsed time on the session header and the home
+  banner was sampled once per repaint and then sat frozen.
+
+### Fixed
+
+- **Tonnage counted unilateral work only once.** A set of "8 reverse lunges"
+  means 8 per leg. Six of the program's exercises are per side, so the weekly
+  tonnage chart — the app's headline "is the load going up?" metric — was
+  understating them by half. Volume now comes from one shared `setVolume()`
+  helper used by the session screen, the weekly chart and history alike, and the
+  schema-4 migration backfills `perSide` onto older logs so past workouts are
+  measured the same way as new ones.
+- **The wake lock leaked when leaving a workout via the tab bar.** Only the ✕
+  button and "finish" ever released it, so tapping «Прогрес» mid-session left the
+  phone screen lit indefinitely. The router owns the exit path now.
+- **Deleting one workout could delete two.** Log ids were built from
+  `logs.length + 1`, so a delete returned a live number to the pool and the next
+  workout could be issued an id that already existed. Ids now come from a
+  monotonic sequence, and the migration re-keys any existing collisions.
+- **A failed save reported success.** When `localStorage` is full or blocked the
+  write error was logged to the console and then «Тренування записано 🎉» was
+  shown anyway. Write failures are surfaced to the user.
+- **Dates were computed through UTC.** Building a `YYYY-MM-DD` with
+  `toISOString()` from a locally-constructed date lands on the previous day
+  anywhere east of Greenwich — so opening the app before ~03:00 put the week
+  planner's "today" marker on a different day than the workout just logged. All
+  calendar arithmetic moved to `js/lib/dates.js`, which only reads local fields.
+- **Collapsible cards snapped shut on every interaction.** Views are rebuilt
+  wholesale on each state change, so the warm-up list closed itself every time a
+  set was logged. `accordion()` keys its open state and survives a re-render.
+- **Logging a set rebuilt the entire screen.** It now patches just the card that
+  changed plus the header, which is what keeps scroll position, focus and open
+  accordions intact.
+- **The rest timer died with the app.** It lived only in memory, so locking the
+  phone during a 100-second rest lost the count — and Android reaps backgrounded
+  PWAs routinely. The deadline is stored as an absolute timestamp and picked back
+  up on return.
+- **The tab bar was reachable during onboarding**, letting you navigate out of a
+  form the rest of the app depends on having been filled in.
+- **A corrupt backup imported cleanly and failed later.** `importJSON` checked
+  only that a `profile` key existed; a malformed `logs` array got through and
+  threw somewhere inside a view long after the import reported success.
+- **Two open tabs silently diverged**, last write winning. A `storage` listener
+  adopts the other tab's state instead.
+- **The weight chart stretched its own axis labels.** `preserveAspectRatio="none"`
+  on a fixed 320-unit viewBox distorted the text along with the line at the
+  620 px desktop width.
+
+### Accessibility
+
+The app previously contained no `aria-*` or `role` attributes at all.
+
+- Bottom sheets are real dialogs: `role="dialog"`, `aria-modal`, labelled by
+  their own title, focus moved in on open and returned to the opener on close,
+  Escape to dismiss, and a Tab trap. Without the trap you could tab straight
+  into the page behind the scrim and operate controls you could not see.
+- Every icon-only button (✕, i, ⇄, −, +, ▶▶, ›) has a spoken name, enforced by a
+  render test that walks each screen looking for unnamed glyph buttons.
+- A visible `:focus-visible` ring. The input outline had been removed outright
+  and buttons never had one, so keyboard focus was invisible.
+- `aria-current` on the active tab, `role="img"` and a text summary on all three
+  chart types, `role="progressbar"` on the session progress bar, `role="status"`
+  on toasts and the update banner, `aria-pressed` on filter and round chips.
+
+### Internal
+
+- New `js/lib/dates.js` and `setVolume`/`exerciseVolume`/`totalVolume` in
+  `plates.js` — single sources of truth for the two things that were being
+  recomputed inconsistently across views.
+- `migrate()` is version-gated rather than a plain defaults merge, and carries a
+  frozen copy of the pre-v4 unilateral slot list: a migration describes history,
+  so it must not change if the program later drops one of those exercises.
+- Test suites grew from 1170 to ~1340 assertions. The date and log-id guards were
+  each verified to fail against the previous implementation — and the date checks
+  force `TZ=Europe/Kyiv`, since CI runs in UTC where that bug cannot reproduce.
+
+---
+
 ## 1.1.0
 
 ### Added

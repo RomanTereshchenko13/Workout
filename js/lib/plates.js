@@ -139,6 +139,35 @@ export function liftedPerRep(kg, mode) {
   return mode === 'pair' ? kg * 2 : kg;
 }
 
+/**
+ * Tonnage for one logged set.
+ *
+ * `perSide` matters: a set of "8 reverse lunges" means 8 per leg, so the work is
+ * done twice. Counting it once undercounted every unilateral exercise by half —
+ * and tonnage is the app's headline "is the load going up?" metric, so the error
+ * showed up right in the weekly bar chart.
+ *
+ * @param {{done?:boolean, kg?:number, reps?:number}} set
+ * @param {{mode:string, isTime?:boolean, perSide?:boolean}} exercise
+ */
+export function setVolume(set, exercise) {
+  if (!set?.done || !set.kg) return 0;
+  const mode = exercise.mode === 'pair' ? 'pair' : 'single';
+  // A timed hold has no reps — count it once so the weight still registers.
+  const reps = exercise.isTime ? 1 : set.reps || 0;
+  return liftedPerRep(set.kg, mode) * reps * (exercise.perSide ? 2 : 1);
+}
+
+/** Tonnage for one exercise entry (active session or history alike). */
+export function exerciseVolume(exercise) {
+  return (exercise.sets || []).reduce((acc, s) => acc + setVolume(s, exercise), 0);
+}
+
+/** Tonnage for a whole list of exercise entries. */
+export function totalVolume(exercises = []) {
+  return exercises.reduce((acc, e) => acc + exerciseVolume(e), 0);
+}
+
 export function round(n) {
   return Math.round(n * 100) / 100;
 }

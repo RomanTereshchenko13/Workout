@@ -1,4 +1,4 @@
-import { h, card, sheet, segmented, kg, btn } from '../ui.js';
+import { h, card, sheet, kg, accordion } from '../ui.js';
 import { GROUPS, allExercises, WARMUP, COOLDOWN } from '../data/exercises.js';
 import { get } from '../store.js';
 import { nearestLoad, describeLoad } from '../lib/plates.js';
@@ -14,9 +14,13 @@ export function libraryView() {
     h('div', { class: 'page-head' }, h('div', {}, h('div', { class: 'eyebrow' }, `${allExercises().length} вправ під твій інвентар`), h('h1', {}, 'Вправи'))),
 
     h('div', { class: 'filter-scroll' },
-      h('div', { class: 'chips' },
+      h('div', { class: 'chips', role: 'group', 'aria-label': 'Фільтр за групою м’язів' },
         [['all', 'Усі'], ...Object.entries(GROUPS).map(([k, v]) => [k, shortGroup(v)])].map(([k, label]) =>
-          h('button', { class: `chip chip-btn ${filter === k ? 'is-active' : ''}`, onclick: () => { filter = k; rerender(); } }, label),
+          h('button', {
+            class: `chip chip-btn ${filter === k ? 'is-active' : ''}`,
+            'aria-pressed': filter === k ? 'true' : 'false',
+            onclick: () => { filter = k; rerender(); },
+          }, label),
         ),
       ),
     ),
@@ -35,8 +39,8 @@ export function libraryView() {
 
     programCard(),
 
-    h('details', { class: 'card accordion' },
-      h('summary', {}, h('strong', {}, 'Розминка й заминка')),
+    accordion('library-warmup',
+      h('strong', {}, 'Розминка й заминка'),
       h('h4', {}, 'Розминка'),
       h('ul', { class: 'bullets' }, WARMUP.map((w) => h('li', {}, h('strong', {}, w.name), ' — ', w.detail))),
       h('h4', {}, 'Заминка'),

@@ -20,6 +20,7 @@ const ASSETS = [
   './js/lib/plates.js',
   './js/lib/nutrition.js',
   './js/lib/timer.js',
+  './js/lib/dates.js',
   './js/data/exercises.js',
   './js/data/program.js',
   './js/views/home.js',

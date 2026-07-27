@@ -3,6 +3,8 @@
  * Mifflin–St Jeor is the standard estimator for resting metabolism.
  */
 
+import { daysAgoISO } from './dates.js';
+
 export const ACTIVITY = {
   sed: { label: 'Сидяча робота, мало руху', factor: 1.2 },
   light: { label: 'Легка активність, 1–3 тренування', factor: 1.375 },
@@ -80,12 +82,11 @@ export function forecast(profile) {
   if (toLose <= 0 || deficit <= 0) return null;
   const kgPerWeek = (deficit * 7) / 7700;
   const weeks = Math.ceil(toLose / kgPerWeek);
-  const date = new Date(Date.now() + weeks * 7 * 86400000);
   return {
     toLose: Math.round(toLose * 10) / 10,
     kgPerWeek: Math.round(kgPerWeek * 100) / 100,
     weeks,
-    dateISO: date.toISOString().slice(0, 10),
+    dateISO: daysAgoISO(-weeks * 7),
   };
 }
 
@@ -107,7 +108,7 @@ export function changeOverDays(entries, days) {
   const t = weightTrend(entries);
   if (t.length < 2) return null;
   const last = t[t.length - 1];
-  const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const cutoff = daysAgoISO(days);
   const from = t.find((e) => e.d >= cutoff) || t[0];
   if (from === last) return null;
   return {

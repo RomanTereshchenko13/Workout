@@ -34,17 +34,21 @@ The screen you open before a workout.
 
 The screen you actually use while training, designed for sweaty hands and a phone on the floor.
 
-- **Sticky header** with a progress bar, sets completed, running tonnage and elapsed time.
-- **Warm-up and cool-down** as collapsible checklists.
-- **Per exercise:** name, muscles worked, an info button with technique cues, and a large weight strip. The `−` and `+` buttons step only through weights the inventory can actually build — never a number you cannot load. Under the weight sits the plate recipe (`2 + 4+3 ×2`).
-- **Set chips.** Tap an empty chip to log it: reps (or seconds for timed work) and weight, with `−1` / `+1` quick buttons. Logging a set carries the weight forward to the remaining sets and starts the rest timer automatically. Tap a completed chip to undo it. `+` adds an extra set.
-- **Rest timer** as a floating bar: countdown, a filling progress background, `+15 s`, pause and skip. Beeps and vibrates at three seconds and at zero. It counts from an absolute timestamp, so locking the screen or switching apps does not drift it.
-- **Screen wake lock** while a session is open, re-acquired when you come back to the app.
-- **Finisher block** — the metabolic circuit or intervals, with its own timers and a "done" checkbox.
+- **Sticky header** with a progress bar, sets completed, running tonnage and a live elapsed clock.
+- **Warm-up and cool-down** as collapsible checklists that stay open once you open them.
+- **Per exercise:** name, muscles worked, an info button with technique cues, a swap button, and a large weight strip. The `−` and `+` buttons step only through weights the inventory can actually build — never a number you cannot load. Under the weight sits the plate recipe (`2 + 4+3 ×2`).
+- **Set chips.** Tap an empty chip to log it: reps (or seconds for timed work) and weight, with `−1` / `+1` quick buttons. Logging a set carries the weight forward to the remaining sets and starts the rest timer automatically. Tap a completed chip to undo it. `+` adds an extra set. Only the card you touched repaints, so nothing else on screen moves.
+- **Supersets.** Exercises meant to be paired are drawn as one block, and the rest timer holds off until the last exercise of the round — logging the first one just points you at the second.
+- **Swap an exercise (⇄).** Offers alternatives for the same muscle group, either for today only or permanently. A permanent swap is applied to every future session in that slot and can be undone in **Профіль**. This is how you train around a sore shoulder without abandoning the program.
+- **Rest timer** as a floating bar: countdown, a filling progress background, `+15 s`, pause and skip. Beeps and vibrates at three seconds and at zero. It counts from an absolute timestamp stored on the session, so locking the screen, switching apps — or the system killing the app outright — does not lose the count.
+- **Screen wake lock** while a session is open, re-acquired when you come back to the app and released the moment you leave the screen.
+- **Finisher block** — the metabolic circuit or intervals, with its own timers and one chip per round, so a partly-finished finisher is recorded as `2/4` rather than lost.
 - **Session note** for sleep, soreness or anything that explains a bad day later.
-- **Finish** shows a summary and writes the session to history; **quit** either minimises it (a live entry stays in the tab bar) or discards it.
+- **Finish** shows a summary and writes the session to history; **quit** either minimises it (a live entry stays in the tab bar, and a running rest timer resumes when you return) or discards it.
 
-Everything is written to storage as it happens, so closing the app mid-workout loses nothing.
+Everything is written to storage as it happens, so closing the app mid-workout loses nothing. If a write ever fails — a full or blocked `localStorage` — the app says so instead of reporting a save that did not happen.
+
+Unilateral exercises (lunges, one-arm rows, carries) are counted per side: "8 reps" means 8 per leg, and the tonnage reflects both.
 
 ---
 
@@ -54,9 +58,9 @@ Three tabs.
 
 **Вага.** A chart with daily weigh-ins as dots, the smoothed trend as a line, and the goal as a dashed line. Trend-based change over 7 / 14 / 30 days. A forecast card — kg per week, weeks remaining, projected date. If two weeks pass without movement, a plateau card appears with concrete next steps instead of a generic "keep going". Cardio of the last two weeks and the full weigh-in log with per-entry deletion.
 
-**Сила.** Weekly tonnage bars (weight × reps × sets, counting both dumbbells), and per-exercise records ranked by estimated 1RM (Epley). Tapping a record opens that exercise's full history.
+**Сила.** Weekly tonnage bars (weight × reps × sets, counting both dumbbells, and both sides for unilateral work), and per-exercise records ranked by estimated 1RM (Epley). Tapping a record opens that exercise's full history.
 
-**Історія.** Every session: date, wave week, sets, duration, tonnage, whether the finisher was done, expandable per-exercise detail, and your note. Individual sessions can be deleted.
+**Історія.** Every session: date, wave week, sets, duration, tonnage, finisher rounds completed, expandable per-exercise detail, and your note. Individual sessions can be deleted.
 
 ---
 
@@ -88,7 +92,9 @@ Also here: the full program structure (what each of the A/B/C days contains and 
 
 Personal data, goal weight with a live recalculation of targets, training settings (default rest, auto-timer, sound, vibration), and program state — which day comes next and which wave week you are in, with manual overrides for when you trained away from the app.
 
-Data section: JSON export, import, and a full reset behind a confirmation. Plus the app version, an update check, and install instructions for Android and iOS.
+**Exercise swaps.** Any permanent substitutions you have made, each undoable individually or all at once.
+
+Data section: JSON export, import, and a full reset behind a confirmation — plus when the last backup was taken and how many workouts have been logged since. Everything lives in this browser's storage, which can be cleared without warning, so the app asks for a backup once there is history worth losing. Also the app version, an update check, and install instructions for Android and iOS.
 
 ---
 
@@ -104,6 +110,10 @@ Data section: JSON export, import, and a full reset behind a confirmation. Plus 
 
 **Installable.** Standalone display, maskable icons, app shortcuts to "start a workout", "weigh in" and the plate calculator.
 
+**Accessible.** Bottom sheets are proper dialogs — labelled, focus-trapped, dismissible with Escape, and they hand focus back where it came from. Every icon-only button has a spoken name, charts carry a text summary, and keyboard focus is visible.
+
+**Dates are local.** Every day boundary is the user's own calendar day, not UTC — so opening the app at 01:00 does not put "today" on yesterday.
+
 ---
 
 ## Roadmap
@@ -111,9 +121,8 @@ Data section: JSON export, import, and a full reset behind a confirmation. Plus 
 Ordered roughly by value per unit of work. See ARCHITECTURE.md for where each would slot in.
 
 **Near-term**
-- Exercise substitution — swap a prescribed exercise for another from the same group, remembered per slot.
+- A notification when the rest timer ends, so the phone can sleep during long rests. The deadline already survives being backgrounded; what is missing is the ability to make a sound once the tab is suspended.
 - Custom program editor — build your own day from the library instead of only A/B/C.
-- Plate-hint on the lock screen level: a notification when the rest timer ends, so the phone can sleep.
 - Body measurements (waist, chest, hips) alongside weight — waist is often the better fat-loss signal.
 - Per-exercise notes that persist across sessions ("left shoulder — go light on the negative").
 

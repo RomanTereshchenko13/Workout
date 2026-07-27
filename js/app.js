@@ -1,11 +1,11 @@
 /** App shell: router, tab bar, onboarding, service-worker update flow. */
 
 import { h, clear, btn, field, num, select, segmented, toast, card } from './ui.js';
-import { get, subscribe, saveProfile } from './store.js';
-import { primeAudio } from './lib/timer.js';
+import { get, subscribe, subscribeExternal, saveProfile } from './store.js';
+import { primeAudio, keepAwake } from './lib/timer.js';
 import { ACTIVITY } from './lib/nutrition.js';
 
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';
 
 const ROUTES = {
   '#/': { label: 'Головна', icon: '🏋', load: () => import('./views/home.js').then((m) => m.homeView) },
@@ -30,6 +30,25 @@ let rendering = false;
 // navigation.
 let renderPending = false;
 
+/**
+ * Anything the session screen switches on globally has to be switched back off
+ * when the user leaves it — including via the tab bar, which is the one exit
+ * the session screen itself never sees. Leaving the wake lock held meant the
+ * phone screen stayed lit for the rest of the day.
+ */
+const SESSION_HOOKS = { onLeave: null };
+
+export function onLeaveSession(fn) {
+  SESSION_HOOKS.onLeave = fn;
+}
+
+function leaveSessionIfNeeded(hash) {
+  if (lastHash !== '#/session' || hash === '#/session') return;
+  document.body.dataset.session = '';
+  keepAwake(false);
+  SESSION_HOOKS.onLeave?.();
+}
+
 async function render() {
   if (rendering) {
     renderPending = true;
@@ -39,11 +58,16 @@ async function render() {
   try {
     const data = get();
     if (!data.profile.onboarded) {
+      leaveSessionIfNeeded('#/');
       clear(root()).appendChild(onboarding());
-      renderTabs('#/');
+      // No tab bar until onboarding is done — it let you navigate out of a form
+      // the rest of the app depends on having been filled in.
+      clear(document.getElementById('tabs'));
+      lastHash = null;
       return;
     }
     const hash = ROUTES[location.hash] ? location.hash : '#/';
+    leaveSessionIfNeeded(hash);
     // An in-progress session must stay reachable — the tab bar shows a live entry.
     const view = await ROUTES[hash].load();
     const node = view();
@@ -72,19 +96,27 @@ let lastHash = null;
 function renderTabs(active) {
   const bar = document.getElementById('tabs');
   const data = get();
+  if (!data.profile.onboarded) return clear(bar);
   clear(bar);
   for (const [hash, r] of Object.entries(ROUTES)) {
     if (r.hidden) continue;
     bar.appendChild(
-      h('button', { class: `tab ${active === hash ? 'is-active' : ''}`, onclick: () => go(hash) },
-        h('span', { class: 'tab-icon' }, r.icon),
+      h('button', {
+        class: `tab ${active === hash ? 'is-active' : ''}`,
+        onclick: () => go(hash),
+        'aria-current': active === hash ? 'page' : null,
+      },
+        h('span', { class: 'tab-icon', 'aria-hidden': 'true' }, r.icon),
         h('span', { class: 'tab-label' }, r.label),
       ),
     );
   }
   if (data.active && active !== '#/session') {
     bar.classList.add('has-session');
-    bar.appendChild(h('button', { class: 'tab tab-session', onclick: () => go('#/session') }, h('span', { class: 'tab-icon' }, '⏱'), h('span', { class: 'tab-label' }, 'Триває')));
+    bar.appendChild(h('button', { class: 'tab tab-session', onclick: () => go('#/session'), 'aria-label': 'Повернутися до тренування, що триває' },
+      h('span', { class: 'tab-icon', 'aria-hidden': 'true' }, '⏱'),
+      h('span', { class: 'tab-label' }, 'Триває'),
+    ));
   } else {
     bar.classList.remove('has-session');
   }
@@ -269,7 +301,7 @@ let waitingWorker = null;
 function updateBanner(worker) {
   waitingWorker = worker;
   if (document.getElementById('update-banner')) return;
-  const banner = h('div', { class: 'update-banner', id: 'update-banner' },
+  const banner = h('div', { class: 'update-banner', id: 'update-banner', role: 'status' },
     h('span', {}, 'Доступна нова версія'),
     h('button', {
       class: 'ub-btn',
@@ -335,6 +367,12 @@ window.addEventListener('app:render', render);
 subscribe(() => {
   // Only the tab bar repaints here; full re-renders are explicit so typing is never interrupted.
   renderTabs(ROUTES[location.hash] ? location.hash : '#/');
+});
+// Another tab wrote to storage: adopt its state rather than letting the two
+// copies drift until one overwrites the other.
+subscribeExternal(() => {
+  toast('Дані оновлено з іншої вкладки');
+  render();
 });
 document.addEventListener('click', primeAudio, { once: true });
 

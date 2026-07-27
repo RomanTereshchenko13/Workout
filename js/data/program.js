@@ -195,23 +195,52 @@ export function lastPerformance(history = [], exerciseId) {
 }
 
 /**
+ * Resolve a program slot through the user's permanent substitutions.
+ * Falls back to the original whenever the replacement is not a real exercise.
+ */
+export function resolveSlot(slotId, substitutions = {}) {
+  const replacement = substitutions[slotId];
+  return replacement && EXERCISES[replacement] ? replacement : slotId;
+}
+
+/**
+ * Exercises that can stand in for a given one: same muscle group first, then
+ * anything that loads the same way. Used by the swap sheet.
+ */
+export function alternativesFor(exerciseId) {
+  const meta = EXERCISES[exerciseId];
+  if (!meta) return [];
+  return Object.entries(EXERCISES)
+    .filter(([id, e]) => id !== exerciseId && e.group === meta.group)
+    .map(([id, e]) => ({ id, ...e, sameMode: e.mode === meta.mode }))
+    .sort((a, b) => (b.sameMode ? 1 : 0) - (a.sameMode ? 1 : 0) || a.name.localeCompare(b.name, 'uk'));
+}
+
+/**
  * Build the full session plan.
  * @returns {{day, wave, exercises:Array, finisher, estMinutes:number}}
  */
-export function buildSession({ rotation, week, history, inventory, experience }) {
+export function buildSession({ rotation, week, history, inventory, experience, substitutions = {} }) {
   const day = dayByRotation(rotation);
   const wave = waveOf(week);
 
   const exercises = day.main.map((slot) => {
-    const meta = EXERCISES[slot.id];
+    // `slotId` is the position in the program, `id` is whatever is actually
+    // being performed there. Keeping both is what lets a substitution persist
+    // across sessions and still be undone later.
+    const id = resolveSlot(slot.id, substitutions);
+    const meta = EXERCISES[id];
     const sets = Math.max(2, slot.sets + wave.setsDelta);
-    const sug = suggestWeight({ id: slot.id, ...meta }, { history, inventory, experience, wave });
+    const sug = suggestWeight({ id, ...meta }, { history, inventory, experience, wave });
     const isTime = !!slot.time;
     const reps = isTime
-      ? timeTarget(slot.id, wave)
+      ? timeTarget(id, wave)
       : { low: wave.reps[0], high: wave.reps[1] };
     return {
       ...slot,
+      id,
+      slotId: slot.id,
+      substituted: id !== slot.id,
       name: meta.name,
       muscles: meta.muscles,
       mode: meta.mode,
@@ -230,6 +259,23 @@ export function buildSession({ rotation, week, history, inventory, experience })
   );
 
   return { day, wave, exercises, finisher: day.finisher, estMinutes };
+}
+
+/**
+ * Fold a flat exercise list into blocks, so consecutive slots sharing an `ss`
+ * value become one superset. Every entry keeps its original index — the session
+ * screen addresses exercises by index when patching a single card.
+ * @returns {Array<{ss:number|null, items:Array<{e:object,i:number}>}>}
+ */
+export function groupExercises(exercises = []) {
+  const blocks = [];
+  exercises.forEach((e, i) => {
+    const key = e.ss ?? null;
+    const prev = blocks[blocks.length - 1];
+    if (key !== null && prev && prev.ss === key) prev.items.push({ e, i });
+    else blocks.push({ ss: key, items: [{ e, i }] });
+  });
+  return blocks;
 }
 
 function timeTarget(id, wave) {

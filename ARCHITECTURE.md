@@ -35,36 +35,52 @@ How the app is put together, why it is shaped this way, and how to grow it witho
                      │ pure functions, no DOM
             ┌────────▼─────────────────────────┐
             │ lib/plates.js  lib/nutrition.js  │
-            │ lib/timer.js                     │
+            │ lib/timer.js   lib/dates.js      │
             └──────────────────────────────────┘
 ```
 
-The rule that keeps this testable: **`lib/` and `data/` never touch the DOM**, which is why `smoke-test.mjs` can import them straight into Node. Views may import anything; nothing imports views except the router.
+The rule that keeps this testable: **`lib/` and `data/` never touch the DOM**, which is why `smoke-test.mjs` can import them straight into Node. (`lib/timer.js` is the one exception — it registers a `visibilitychange` listener to re-acquire the wake lock, so it is exercised from `render-test.mjs` instead.) Views may import anything; nothing imports views except the router.
+
+Two helpers exist specifically because the same calculation was being done inconsistently in several views:
+
+- **`lib/dates.js`** — every date in the app is a bare `YYYY-MM-DD` meaning "the day the user was living in", never an instant. `toISOString()` converts to UTC first, so it is never the right tool here.
+- **`plates.js` `setVolume()`** — one definition of tonnage, including the doubling for `perSide` work, shared by the session screen, the weekly chart and history.
 
 ### `js/app.js` — shell
 
 Hash router (`#/`, `#/session`, `#/progress`, `#/library`, `#/tools`, `#/profile`), lazily importing one view module per route. Owns the tab bar, the onboarding gate, and the service-worker update flow. Views trigger a re-render by dispatching `app:render` on `window`; `store.subscribe` only repaints the tab bar, so a state write never yanks the DOM out from under a focused input.
 
+The router also owns **leaving** a route, via `onLeaveSession()`. The session screen turns on a wake lock and a body flag, and the tab bar is an exit the screen itself never observes — so cleanup cannot live in its own dismiss handlers.
+
 ### `js/store.js` — state
 
-A single object in `localStorage` under one key, with a `SCHEMA` version. Every read goes through `migrate()`, which deep-merges the persisted object over `DEFAULTS()` — so adding a new field is backward compatible for free: old saves simply pick up the default.
+A single object in `localStorage` under one key, with a `SCHEMA` version. Every read goes through `migrate()`, which merges the persisted object over `DEFAULTS()` — so adding a new field is backward compatible for free — and then runs any version-gated steps that have to *change* data the user already owns.
 
-Mutations go through `update(fn)`, which persists and notifies. Domain helpers (`logWeight`, `startSession`, `finishSession`, …) are the intended API; reach for raw `update()` only for genuinely new concepts.
+A migration describes history, so it should not read live constants: the v4 `perSide` backfill carries a frozen copy of the unilateral slot list, because if the program later drops one of those exercises, workouts logged back then were still done per side.
+
+Mutations go through `update(fn)`, which persists and notifies. Domain helpers (`logWeight`, `startSession`, `finishSession`, …) are the intended API; reach for raw `update()` only for genuinely new concepts. `writeError()` reports whether the last write actually reached storage — a full quota must never be reported to the user as a saved workout.
 
 Shape:
 
 ```js
 {
   v, profile, inventory, settings,
-  state: { rotation, week, blockStart },
-  logs: [ { id, date, dayKey, week, durationSec, finisherDone, note, exercises: [...] } ],
+  state:         { rotation, week, blockStart },
+  substitutions: { [slotId]: exerciseId },       // permanent exercise swaps
+  meta:          { lastBackupAt, lastBackupLogs, nextLogSeq },
+  logs: [ { id, date, dayKey, week, durationSec,
+            finisherRounds, finisherTarget, finisherDone, note,
+            exercises: [ { id, slotId, mode, isTime, perSide, sets } ] } ],
   weights: [ { d, kg } ],
   cardio:  [ { d, key, minutes } ],
-  active:  null | { startedAt, date, dayKey, week, exercises: [...], finisherDone, note }
+  active:  null | { startedAt, date, dayKey, week, exercises: [...],
+                    finisherRounds, finisherTarget, rest, note }
 }
 ```
 
-`active` is the in-progress workout, written on every set. That is what makes the app survivable: the phone can die mid-session and nothing is lost.
+`active` is the in-progress workout, written on every set. That is what makes the app survivable: the phone can die mid-session and nothing is lost. `active.rest` holds the rest timer's **absolute deadline** for the same reason — Android reaps backgrounded PWAs, and a countdown that lives only in memory dies with the process.
+
+Log ids come from `meta.nextLogSeq`, never from `logs.length`: a length-derived id returns a live number to the pool after a delete, and two logs sharing an id means one delete removes both.
 
 ### `js/lib/plates.js` — the interesting one
 
@@ -74,7 +90,12 @@ Everything downstream — progression steps, the `± ` buttons, the calculator, 
 
 ### `js/data/program.js` — the plan
 
-`DAYS` describes three full-body days as slot lists (`{ id, sets, rest, perSide?, time?, ss? }`). `WAVES` describes the 4-week cycle (rep ranges, set delta, intensity factor). `buildSession()` combines a rotation index, a wave week, the history and the inventory into a concrete session. `suggestWeight()` holds the progression rule and returns both a weight and a human explanation.
+`DAYS` describes three full-body days as slot lists (`{ id, sets, rest, perSide?, time?, ss? }`). `WAVES` describes the 4-week cycle (rep ranges, set delta, intensity factor). `buildSession()` combines a rotation index, a wave week, the history, the inventory and the user's substitutions into a concrete session. `suggestWeight()` holds the progression rule and returns both a weight and a human explanation.
+
+Two distinctions matter when reading a session:
+
+- **`slotId` vs `id`** — the slot is the position in the program; the id is what is actually being performed there. They differ when a substitution is in play, and keeping both is what lets a swap persist across sessions and still be undone later.
+- **`ss`** — consecutive slots sharing an `ss` value are one superset. `groupExercises()` folds them into blocks for rendering, and the session screen suppresses the rest timer until the last exercise of a round.
 
 ---
 
@@ -114,7 +135,11 @@ Edit `DAYS` in `js/data/program.js`. A day needs a `key`, `title`, `focus`, `col
 
 ### Add a persisted field
 
-Add it to `DEFAULTS()` in `store.js`. Existing saves inherit the default through `migrate()`. Only bump `SCHEMA` and write explicit migration code when an existing field changes *meaning* or shape.
+Add it to `DEFAULTS()` in `store.js`. Existing saves inherit the default through `migrate()`. Only bump `SCHEMA` and write explicit migration code when an existing field changes *meaning* or shape — and when you do, gate it on the stored `v` and freeze whatever constants it depends on inside the migration.
+
+### Substitute an exercise
+
+`state.substitutions` maps a program slot id to a replacement exercise id; `resolveSlot()` applies it inside `buildSession()` and falls back to the original if the replacement is not a real exercise. The swap UI is the ⇄ button on any session exercise card; `alternativesFor()` supplies the candidates (same muscle group, same loading mode first).
 
 ### Change the equipment
 
@@ -128,11 +153,16 @@ Three scripts, all dependency-free, all run in CI before a deploy:
 
 | Script | Covers |
 |---|---|
-| `smoke-test.mjs` | Plate ladders and their gaps, inventory feasibility of every combination, nearest/next-step selection, exercise data shape, program structure and muscle coverage, session generation across the whole wave, progression rules including the ceiling case, and the nutrition formulas against hand-computed values. |
-| `render-test.mjs` | Imports every real view module against a stubbed DOM and renders each screen empty and populated. Catches broken imports, renamed helpers, crashes on empty state, and `undefined`/`NaN` leaking into the UI. Also drives four full workouts through the store to verify rotation, wave advance, progression and backup round-trip. |
+| `smoke-test.mjs` | Plate ladders and their gaps, inventory feasibility of every combination, nearest/next-step selection, exercise data shape, program structure and muscle coverage, session generation across the whole wave, progression rules including the ceiling case, the nutrition formulas against hand-computed values, local-date arithmetic, tonnage (including the per-side doubling), superset grouping and substitution resolution. |
+| `render-test.mjs` | Imports every real view module against a stubbed DOM and renders each screen empty and populated. Catches broken imports, renamed helpers, crashes on empty state, and `undefined`/`NaN` leaking into the UI. Also drives full workouts through the store to verify rotation, wave advance, progression, log-id uniqueness across deletes, schema migration, rest-timer persistence, the backup reminder, accordion state, dialog semantics and accessible names on icon-only buttons. |
 | `check-assets.mjs` | Every source file is listed in the service worker cache and every listed asset exists; the entry `<script type="module">` carries no query string; `package.json`, `APP_VERSION` and `CHANGELOG.md` agree on the version. |
 
 `render-test.mjs` matters more than it looks: it is the reason a view refactor cannot silently ship a blank screen without a browser in the loop.
+
+Two conventions worth keeping:
+
+- **A guard should be verified to fail against the bug it guards.** The log-id and date checks were both confirmed to go red against the previous implementation before being kept.
+- **Pin the timezone for date assertions.** CI runs in UTC, where the bug `lib/dates.js` exists to fix cannot reproduce — so the date group forces `TZ=Europe/Kyiv` and asserts the contrast explicitly.
 
 ---
 
@@ -154,7 +184,9 @@ The deliberate choice here: updates are never applied silently. Swapping code mi
 
 ## Known limits
 
-- **Storage is per-origin.** Clearing site data wipes everything; the JSON export is the only backup. A future sync would be file-based and user-controlled, not a server.
+- **Storage is per-origin.** Clearing site data wipes everything; the JSON export is the only backup. iOS evicts storage for a non-installed site after roughly a week of disuse. The app now nags for a backup once there is history worth losing, but it cannot prevent the eviction. A future sync would be file-based and user-controlled, not a server.
 - **Audio needs a gesture.** The rest timer's beep only works after the first tap in a session. `primeAudio()` handles this on first interaction, but the very first beep of a cold launch can be silent.
 - **Wake lock is Chromium-only.** iOS Safari ignores it; the screen will sleep during long rests.
+- **A backgrounded rest timer cannot make a sound.** The deadline survives (see `active.rest`), so the countdown is correct on return — but if the tab is suspended the end-of-rest beep never fires. Fixing that properly needs the Notifications API and a permission prompt.
+- **The service worker has no runtime test.** `check-assets.mjs` verifies the asset manifest, but the fetch and update logic is only exercised by hand in a browser.
 - **The 20 kg ceiling is real.** For strong single-arm work the plan advises reps and tempo once the ceiling is hit. The structural fix is more plates — the inventory setting is already there, which is why the ceiling is a setting and not a constant.

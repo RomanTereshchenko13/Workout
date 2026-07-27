@@ -50,9 +50,16 @@ export function primeAudio() {
 
 /**
  * Controllable timer with pause and add-time — used for rest between sets.
+ *
+ * @param {number} seconds full length of the rest
+ * @param {{startAt?:number, paused?:boolean, sound?:boolean, vibrate?:boolean,
+ *          onTick?:Function, onDone?:Function, onChange?:Function}} opts
+ *   `startAt` / `paused` restore a timer that was already running before the app
+ *   was backgrounded. `onChange` fires whenever the deadline moves, so the
+ *   caller can write it somewhere that survives the process being killed.
  */
 export function restTimer(seconds, opts = {}) {
-  let left = seconds;
+  let left = Math.max(0, opts.startAt ?? seconds);
   let handle = null;
   let running = false;
   let lastStamp = 0;
@@ -72,11 +79,13 @@ export function restTimer(seconds, opts = {}) {
         stop();
         if (opts.sound) beepDone();
         if (opts.vibrate) vibrate([120, 80, 120, 80, 220]);
+        opts.onChange?.(api);
         opts.onDone?.();
         return;
       }
     }
     handle = setTimeout(tick, 150);
+    handle?.unref?.();
   };
 
   function start() {
@@ -84,31 +93,36 @@ export function restTimer(seconds, opts = {}) {
     running = true;
     lastStamp = Date.now();
     handle = setTimeout(tick, 150);
+    handle?.unref?.();
   }
   function stop() {
     running = false;
     clearTimeout(handle);
   }
 
-  start();
-
-  return {
+  const api = {
     start,
     stop,
     toggle() {
       running ? stop() : start();
       opts.onTick?.(left);
+      opts.onChange?.(api);
       return running;
     },
     add(sec) {
       left = Math.max(0, left + sec);
       opts.onTick?.(left);
+      opts.onChange?.(api);
     },
     skip() {
       stop();
       left = 0;
       opts.onTick?.(0);
+      opts.onChange?.(api);
       opts.onDone?.();
+    },
+    get total() {
+      return seconds;
     },
     get left() {
       return left;
@@ -117,6 +131,11 @@ export function restTimer(seconds, opts = {}) {
       return running;
     },
   };
+
+  if (!opts.paused) start();
+  opts.onChange?.(api);
+
+  return api;
 }
 
 /** Keep the screen awake during a workout (Android Chrome supports this). */

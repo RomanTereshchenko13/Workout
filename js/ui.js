@@ -38,6 +38,17 @@ export function clear(node) {
   return node;
 }
 
+/**
+ * Swap one rendered node for another in place. This is the whole of the app's
+ * "diffing": screens that only need one card refreshed rebuild that card rather
+ * than the entire view, which is what keeps open accordions, focus and scroll
+ * position alive through an interaction.
+ */
+export function replaceNode(oldNode, newNode) {
+  oldNode?.parentNode?.replaceChild(newNode, oldNode);
+  return newNode;
+}
+
 /* ─────────────── Formatting ─────────────── */
 
 const MONTHS = ['січ', 'лют', 'бер', 'кві', 'тра', 'чер', 'лип', 'сер', 'вер', 'жов', 'лис', 'гру'];
@@ -106,8 +117,10 @@ export function btn(label, opts = {}) {
       onclick: opts.onClick,
       type: opts.type || 'button',
       disabled: opts.disabled,
+      // Buttons whose visible label is a glyph (✕, ›) need a spoken name.
+      'aria-label': opts.ariaLabel,
     },
-    opts.icon ? h('span', { class: 'btn-icon' }, opts.icon) : null,
+    opts.icon ? h('span', { class: 'btn-icon', 'aria-hidden': 'true' }, opts.icon) : null,
     label,
   );
 }
@@ -165,8 +178,27 @@ export function stat(value, label, tone) {
   return h('div', { class: `stat ${tone ? `tone-${tone}` : ''}` }, h('div', { class: 'stat-value' }, value), h('div', { class: 'stat-label' }, label));
 }
 
+/**
+ * Collapsible card whose open/closed state survives a re-render.
+ *
+ * Views are rebuilt from scratch on every state change, so a plain `<details>`
+ * snapped shut every time you logged a set — the warm-up list would not stay
+ * open through a workout. Keying the state by a stable string fixes that
+ * without any diffing machinery.
+ */
+const accordionOpen = new Map();
+
+export function accordion(key, summary, ...children) {
+  const el = h('details', { class: 'card accordion', open: accordionOpen.get(key) === true },
+    h('summary', {}, summary),
+    ...children,
+  );
+  el.addEventListener('toggle', () => accordionOpen.set(key, el.open === true));
+  return el;
+}
+
 export function toast(msg, tone = '') {
-  const t = h('div', { class: `toast ${tone}` }, msg);
+  const t = h('div', { class: `toast ${tone}`, role: 'status', 'aria-live': 'polite' }, msg);
   document.body.appendChild(t);
   requestAnimationFrame(() => t.classList.add('is-in'));
   setTimeout(() => {
@@ -175,26 +207,70 @@ export function toast(msg, tone = '') {
   }, 2200);
 }
 
-/** Bottom sheet — the mobile-style modal used throughout the app. */
+const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+let sheetSeq = 0;
+
+/**
+ * Bottom sheet — the mobile-style modal used throughout the app.
+ *
+ * It is a real dialog: it names itself for screen readers, takes focus on open,
+ * keeps Tab inside itself while it is up, closes on Escape and hands focus back
+ * to whatever opened it. Without the trap you could tab straight into the page
+ * behind the scrim and operate controls you cannot see.
+ */
 export function sheet(title, content, actions = []) {
+  const titleId = `sheet-title-${++sheetSeq}`;
+  const opener = typeof document !== 'undefined' ? document.activeElement : null;
+  let closed = false;
+
   const close = () => {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKeydown, true);
     wrap.classList.remove('is-in');
     setTimeout(() => wrap.remove(), 220);
+    opener?.focus?.();
   };
-  const wrap = h(
-    'div',
-    { class: 'sheet-wrap', onclick: (e) => e.target === wrap && close() },
-    h(
-      'div',
-      { class: 'sheet' },
-      h('div', { class: 'sheet-grip' }),
-      h('h3', { class: 'sheet-title' }, title),
-      h('div', { class: 'sheet-body' }, content),
-      actions.length ? h('div', { class: 'sheet-actions' }, actions.map((a) => btn(a.label, { variant: a.variant, onClick: () => { a.onClick?.(close); if (!a.keepOpen) close(); } }))) : null,
-    ),
+
+  function onKeydown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const items = [...(panel.querySelectorAll?.(FOCUSABLE) || [])].filter((n) => !n.disabled);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !panel.contains?.(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  const panel = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId, tabindex: '-1' },
+    h('div', { class: 'sheet-grip', 'aria-hidden': 'true' }),
+    h('h3', { class: 'sheet-title', id: titleId }, title),
+    h('div', { class: 'sheet-body' }, content),
+    actions.length
+      ? h('div', { class: 'sheet-actions' }, actions.map((a) => btn(a.label, { variant: a.variant, onClick: () => { a.onClick?.(close); if (!a.keepOpen) close(); } })))
+      : null,
   );
+
+  const wrap = h('div', { class: 'sheet-wrap', onclick: (e) => e.target === wrap && close() }, panel);
+
   document.body.appendChild(wrap);
-  requestAnimationFrame(() => wrap.classList.add('is-in'));
+  document.addEventListener('keydown', onKeydown, true);
+  requestAnimationFrame(() => {
+    wrap.classList.add('is-in');
+    const items = panel.querySelectorAll?.(FOCUSABLE);
+    (items?.[0] || panel).focus?.();
+  });
   return close;
 }
 
@@ -234,9 +310,19 @@ export function weightChart(points, { goal, height = 180 } = {}) {
 
   const gridVals = [min + span * 0.08, (min + max) / 2, max - span * 0.08];
 
+  const first = points[0];
+  const last = points[points.length - 1];
+
   return svgEl(
     'svg',
-    { viewBox: `0 0 ${W} ${H}`, class: 'chart', preserveAspectRatio: 'none' },
+    {
+      viewBox: `0 0 ${W} ${H}`,
+      class: 'chart',
+      // No preserveAspectRatio="none": stretching a fixed 320-unit viewBox to a
+      // wider container distorts the axis labels along with the line.
+      role: 'img',
+      'aria-label': `Графік ваги: ${fmtDate(first.d)} — ${first.kg} кг, ${fmtDate(last.d)} — ${last.kg} кг, тренд ${last.trend} кг${goal ? `, ціль ${goal} кг` : ''}`,
+    },
     svgEl('defs', {}, svgEl('linearGradient', { id: 'wgrad', x1: '0', y1: '0', x2: '0', y2: '1' },
       svgEl('stop', { offset: '0%', 'stop-color': 'var(--accent)', 'stop-opacity': '0.28' }),
       svgEl('stop', { offset: '100%', 'stop-color': 'var(--accent)', 'stop-opacity': '0' }),
@@ -269,7 +355,12 @@ export function barChart(items, { height = 140, unit = '' } = {}) {
 
   return svgEl(
     'svg',
-    { viewBox: `0 0 ${W} ${H}`, class: 'chart' },
+    {
+      viewBox: `0 0 ${W} ${H}`,
+      class: 'chart',
+      role: 'img',
+      'aria-label': `Стовпчикова діаграма: ${items.map((i) => `${i.label} — ${i.value}${unit}`).join(', ')}`,
+    },
     items.map((it, i) => {
       const bh = Math.max(2, ((H - pad.t - pad.b) * it.value) / max);
       const x = pad.l + i * bw;
@@ -295,7 +386,7 @@ export function ring(progress, label, sub) {
   const c = 2 * Math.PI * r;
   const p = Math.max(0, Math.min(1, progress));
   return h('div', { class: 'ring-wrap' },
-    svgEl('svg', { viewBox: '0 0 110 110', class: 'ring' },
+    svgEl('svg', { viewBox: '0 0 110 110', class: 'ring', role: 'img', 'aria-label': `${label}${sub ? `, ${sub}` : ''} — ${Math.round(p * 100)}% до цілі` },
       svgEl('circle', { cx: 55, cy: 55, r, class: 'ring-bg' }),
       svgEl('circle', {
         cx: 55, cy: 55, r,

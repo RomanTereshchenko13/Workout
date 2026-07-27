@@ -1,4 +1,4 @@
-import { h, card, btn, kg, field, num, segmented, toast, sheet, stat } from '../ui.js';
+import { h, card, btn, kg, field, num, segmented, toast, stat, accordion } from '../ui.js';
 import { get, saveInventory } from '../store.js';
 import { achievableLoads, nearestLoad, describeLoad, plateUsage, maxLoad } from '../lib/plates.js';
 import { NUTRITION_RULES, macroTargets, bmi, bmiLabel, weeklyRate, ACTIVITY, tdee, bmr } from '../lib/nutrition.js';
@@ -34,12 +34,13 @@ function plateCalculator(d) {
     h('h3', {}, 'Калькулятор блинів'),
     segmented(calcMode, [['pair', 'Дві гантелі'], ['single', 'Одна гантель']], (v) => { calcMode = v; rerender(); }),
     h('div', { class: 'calc-target' },
-      h('button', { class: 'load-btn', onclick: () => { calcTarget = Math.max(2, calcTarget - 1); rerender(); } }, '−'),
+      h('button', { class: 'load-btn', 'aria-label': 'Зменшити цільову вагу', onclick: () => { calcTarget = Math.max(2, calcTarget - 1); rerender(); } }, '−'),
       h('div', {}, h('div', { class: 'calc-kg' }, `${calcTarget} кг`), h('div', { class: 'muted small' }, 'потрібна вага гантелі')),
-      h('button', { class: 'load-btn', onclick: () => { calcTarget = Math.min(maxLoad(inv, calcMode), calcTarget + 1); rerender(); } }, '+'),
+      h('button', { class: 'load-btn', 'aria-label': 'Збільшити цільову вагу', onclick: () => { calcTarget = Math.min(maxLoad(inv, calcMode), calcTarget + 1); rerender(); } }, '+'),
     ),
     h('input', {
       type: 'range', class: 'slider', min: 2, max: maxLoad(inv, calcMode), step: 1, value: calcTarget,
+      'aria-label': 'Цільова вага гантелі, кг',
       oninput: (e) => { calcTarget = parseFloat(e.target.value); rerender(); },
     }),
     h('div', { class: `calc-result ${exact ? '' : 'is-approx'}` },
@@ -106,8 +107,8 @@ function inventoryCard(d) {
   const maxInput = num(inv.maxPerDumbbellKg, { step: 1, min: 2 });
   const sideInput = num(inv.maxPlatesPerSide, { step: 1, min: 1, max: 8 });
 
-  return h('details', { class: 'card accordion' },
-    h('summary', {}, h('strong', {}, 'Налаштування інвентарю'), h('span', { class: 'muted small' }, ' грифи, блини, ліміти')),
+  return accordion('tools-inventory',
+    [h('strong', {}, 'Налаштування інвентарю'), h('span', { class: 'muted small' }, ' грифи, блини, ліміти')],
     h('div', { class: 'sheet-grid' },
       field('Вага грифа з гайками, кг', barInput),
       field('Ліміт на гантель, кг', maxInput, 'Твій набір розрахований на 20'),

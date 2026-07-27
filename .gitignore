@@ -1,0 +1,7 @@
+# Nothing is built locally — icons are generated in CI, but committing them keeps
+# the app installable straight from a clone.
+node_modules/
+build.txt
+.DS_Store
+Thumbs.db
+*.log

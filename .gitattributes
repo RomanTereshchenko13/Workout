@@ -1,0 +1,5 @@
+# CI runs on Linux and rewrites sw.js / index.html with sed — keep LF in the repo
+# regardless of the checkout platform.
+* text=auto eol=lf
+*.png binary
+*.webp binary

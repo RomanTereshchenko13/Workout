@@ -1,0 +1,64 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Required for actions/deploy-pages to publish.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deploy at a time; newer pushes supersede older ones.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate app icons
+        run: node scripts/make-icons.mjs
+
+      - name: Stamp build id into sw.js and index.html
+        # A unique build id per commit gives the service worker a new cache name,
+        # which is what makes the in-app "Оновити" banner appear on users' phones.
+        run: |
+          BUILD="${GITHUB_SHA::7}-$(date -u +%Y%m%d%H%M)"
+          echo "Build id: $BUILD"
+          sed -i "s/__BUILD__/$BUILD/g" sw.js index.html
+          printf '%s' "$BUILD" > build.txt
+          touch .nojekyll
+
+      - name: Sanity check — no unstamped placeholders left
+        run: |
+          if grep -R "__BUILD__" --include='*.js' --include='*.html' .; then
+            echo "::error::Found unstamped __BUILD__ placeholders"
+            exit 1
+          fi
+
+      - name: Verify service worker asset list matches repo
+        run: node scripts/check-assets.mjs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

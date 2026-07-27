@@ -46,8 +46,11 @@ jobs:
             exit 1
           fi
 
-      - name: Verify service worker asset list matches repo
-        run: node scripts/check-assets.mjs
+      # Everything `npm run check` runs locally: asset manifest and version
+      # consistency, the logic suite, and a headless render of every screen.
+      # A broken screen must not be able to reach the phone.
+      - name: Run checks (assets, logic, render)
+        run: npm run check
 
       - uses: actions/upload-pages-artifact@v3
         with:

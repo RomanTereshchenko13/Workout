@@ -130,7 +130,7 @@ Three scripts, all dependency-free, all run in CI before a deploy:
 |---|---|
 | `smoke-test.mjs` | Plate ladders and their gaps, inventory feasibility of every combination, nearest/next-step selection, exercise data shape, program structure and muscle coverage, session generation across the whole wave, progression rules including the ceiling case, and the nutrition formulas against hand-computed values. |
 | `render-test.mjs` | Imports every real view module against a stubbed DOM and renders each screen empty and populated. Catches broken imports, renamed helpers, crashes on empty state, and `undefined`/`NaN` leaking into the UI. Also drives four full workouts through the store to verify rotation, wave advance, progression and backup round-trip. |
-| `check-assets.mjs` | Every source file is listed in the service worker cache and every listed asset exists. |
+| `check-assets.mjs` | Every source file is listed in the service worker cache and every listed asset exists; the entry `<script type="module">` carries no query string; `package.json`, `APP_VERSION` and `CHANGELOG.md` agree on the version. |
 
 `render-test.mjs` matters more than it looks: it is the reason a view refactor cannot silently ship a blank screen without a browser in the loop.
 
@@ -142,7 +142,13 @@ CI stamps a build id into `sw.js` and `index.html` on every deploy. The cache na
 
 Navigation requests are network-first (a fresh deploy is picked up immediately when online); static assets are cache-first with `ignoreSearch`, so `?v=<build>` query strings still hit the cache.
 
+**The entry module must be loaded under exactly one URL.** `index.html` loads `./js/app.js` with no query string, because the views import `../app.js` and ES modules are keyed by URL — a `?v=` on one of them makes the browser evaluate `app.js` twice, producing two routers, two service-worker registrations and two copies of every piece of module state. Cache-busting is not lost: the service worker fetches each asset with `cache: 'reload'` into a build-scoped cache. `check-assets.mjs` fails the build if a query string reappears.
+
 The deliberate choice here: updates are never applied silently. Swapping code mid-workout would be a great way to lose a session.
+
+### Versions
+
+`APP_VERSION` in `app.js` is the release number a human chooses; the build id is a per-deploy cache key. They are not the same thing and change on different schedules. [CHANGELOG.md](CHANGELOG.md) holds the rule for picking the next version and the release checklist.
 
 ---
 

@@ -5,7 +5,7 @@ import { get, subscribe, saveProfile } from './store.js';
 import { primeAudio } from './lib/timer.js';
 import { ACTIVITY } from './lib/nutrition.js';
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 
 const ROUTES = {
   '#/': { label: 'Головна', icon: '🏋', load: () => import('./views/home.js').then((m) => m.homeView) },
@@ -24,9 +24,17 @@ export function go(hash) {
 const root = () => document.getElementById('app');
 
 let rendering = false;
+// A repaint requested mid-render must not be dropped: the first paint after a
+// cold launch awaits a network import, which is exactly when `beforeinstallprompt`
+// tends to land. Without this the install card would not appear until the next
+// navigation.
+let renderPending = false;
 
 async function render() {
-  if (rendering) return;
+  if (rendering) {
+    renderPending = true;
+    return;
+  }
   rendering = true;
   try {
     const data = get();
@@ -52,6 +60,10 @@ async function render() {
     );
   } finally {
     rendering = false;
+    if (renderPending) {
+      renderPending = false;
+      render();
+    }
   }
 }
 
@@ -151,29 +163,58 @@ function onboarding() {
  */
 let installEvent = null;
 
+/**
+ * How the last install attempt ended: null (never asked), 'accepted' or
+ * 'dismissed'. Needed because `isStandalone()` stays false in the tab that
+ * triggered the install — without this flag the UI would tell someone who just
+ * installed the app to go and install it.
+ */
+let installOutcome = null;
+
+/** A prompt event is single-use; a second prompt() call throws InvalidStateError. */
+let prompting = false;
+
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   installEvent = e;
-  window.dispatchEvent(new CustomEvent('app:render'));
+  installOutcome = null; // the browser is offering again — forget the previous answer
+  render();
 });
 
 window.addEventListener('appinstalled', () => {
+  // Fires both for our own button and for Chrome's ⋮ menu item.
   installEvent = null;
-  window.dispatchEvent(new CustomEvent('app:render'));
+  installOutcome = 'accepted';
+  render();
 });
 
 /** True once the app runs from the home screen rather than a browser tab. */
 export function isStandalone() {
-  return (
-    window.matchMedia?.('(display-mode: standalone)')?.matches === true ||
-    window.matchMedia?.('(display-mode: fullscreen)')?.matches === true ||
-    navigator.standalone === true
-  );
+  // The manifest allows minimal-ui through display_override, and a desktop
+  // install can land in window-controls-overlay. Matching only `standalone`
+  // would show the install card to someone who already installed the app.
+  const modes = ['standalone', 'fullscreen', 'minimal-ui', 'window-controls-overlay'];
+  return modes.some((m) => window.matchMedia?.(`(display-mode: ${m})`)?.matches === true) ||
+    navigator.standalone === true;
 }
 
 /** Whether the browser has offered us a programmatic install prompt. */
-export function canPromptInstall() {
+function canPromptInstall() {
   return installEvent !== null;
+}
+
+/**
+ * What the install card should show:
+ *   'standalone'  — launched from the home screen, say nothing
+ *   'installed'   — installed during this visit; this tab is still a tab
+ *   'ready'       — we hold a prompt event, show the button
+ *   'unavailable' — iOS, or Chrome before/after its prompt: show instructions
+ */
+export function installState() {
+  if (isStandalone()) return 'standalone';
+  if (installOutcome === 'accepted') return 'installed';
+  if (canPromptInstall()) return 'ready';
+  return 'unavailable';
 }
 
 /** iOS never fires beforeinstallprompt — it needs the Share-menu instructions. */
@@ -182,13 +223,27 @@ export function isIOS() {
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
+/** @returns {'accepted'|'dismissed'|'pending'|'unavailable'} */
 export async function promptInstall() {
+  if (prompting) return 'pending'; // double tap: the button lives until userChoice resolves
   if (!installEvent) return 'unavailable';
-  installEvent.prompt();
-  const { outcome } = await installEvent.userChoice;
-  installEvent = null;
-  window.dispatchEvent(new CustomEvent('app:render'));
-  return outcome; // 'accepted' | 'dismissed'
+  const event = installEvent;
+  prompting = true;
+  try {
+    event.prompt();
+    const { outcome } = await event.userChoice;
+    installOutcome = outcome;
+    return outcome;
+  } catch (e) {
+    // Some browsers reject a prompt they consider stale. Nothing to recover:
+    // fall back to the manual instructions rather than surfacing a raw error.
+    console.warn('Install prompt failed', e);
+    return 'unavailable';
+  } finally {
+    prompting = false;
+    installEvent = null; // spent either way — the spec forbids re-prompting
+    render();
+  }
 }
 
 /** Diagnostics for the profile screen — answers "why can't I install this?". */
@@ -201,6 +256,7 @@ export async function installDiagnostics() {
     serviceWorkerActive: !!reg?.active,
     manifest: !!document.querySelector('link[rel="manifest"]'),
     promptReady: canPromptInstall(),
+    outcome: installOutcome,
     ios: isIOS(),
     version: APP_VERSION,
   };

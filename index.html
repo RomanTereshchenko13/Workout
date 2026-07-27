@@ -23,7 +23,15 @@
 <body>
   <main id="app" class="app"></main>
   <nav id="tabs" class="tabs"></nav>
-  <script type="module" src="./js/app.js?v=__BUILD__"></script>
+  <!--
+    No ?v= on this one, deliberately. The views import '../app.js', and ES modules
+    are keyed by URL — a query string here would make the browser evaluate app.js
+    twice, giving the router, the service-worker registration and the install
+    state two independent copies. Cache-busting is already covered: the service
+    worker fetches every asset with cache:'reload' into a build-scoped cache.
+    check-assets.mjs fails the build if a query string comes back.
+  -->
+  <script type="module" src="./js/app.js"></script>
   <noscript>Для роботи застосунку потрібен JavaScript.</noscript>
 </body>
 </html>

@@ -283,6 +283,53 @@ picked = null;
 segs[1].click();
 ok(picked === null, 're-clicking the active segment does not fire a redundant change');
 
+// ── Install flow ──
+// Every branch here was a bug at some point: the card told a user who had just
+// installed the app to install it, a spent prompt event was re-used, and an
+// app launched in minimal-ui was treated as "not installed".
+console.log('\nInstall flow');
+
+const realMatchMedia = globalThis.window.matchMedia;
+globalThis.window.matchMedia = (q) => ({ matches: q.includes('minimal-ui'), addEventListener() {} });
+ok(app.isStandalone() === true, 'minimal-ui counts as installed — display_override allows it');
+globalThis.window.matchMedia = realMatchMedia;
+
+ok(app.installState() === 'unavailable', 'with no captured prompt the card falls back to instructions');
+ok((await app.promptInstall()) === 'unavailable', 'promptInstall without an event reports unavailable instead of throwing');
+
+/** Stands in for Chrome's BeforeInstallPromptEvent. */
+function fakePrompt(outcome) {
+  return {
+    prompts: 0,
+    prevented: false,
+    preventDefault() { this.prevented = true; },
+    prompt() { this.prompts++; },
+    userChoice: Promise.resolve({ outcome }),
+  };
+}
+const fire = (e) => (winListeners.beforeinstallprompt || []).forEach((fn) => fn(e));
+
+const declined = fakePrompt('dismissed');
+fire(declined);
+ok(declined.prevented, 'beforeinstallprompt is prevented so Chrome does not show its own bar');
+ok(app.installState() === 'ready', 'a captured prompt puts the card into button state');
+ok((await app.promptInstall()) === 'dismissed', 'promptInstall reports a declined install');
+ok(app.installState() === 'unavailable', 'after declining, the card offers manual instructions');
+
+const accepted = fakePrompt('accepted');
+fire(accepted);
+ok(app.installState() === 'ready', 'a fresh prompt event re-arms the button');
+ok((await app.promptInstall()) === 'accepted', 'promptInstall reports a successful install');
+ok(accepted.prompts === 1, 'the prompt event is used exactly once');
+ok(app.installState() === 'installed', 'after installing, the card confirms instead of asking again');
+ok((await app.promptInstall()) === 'unavailable', 'a spent prompt event is never prompted twice');
+
+const installedHome = walk(views.home());
+ok(installedHome.text.join(' ').includes('Встановлено'),
+  'the home screen confirms the install rather than telling you to install it again');
+ok(!installedHome.text.join(' ').includes('зараз працює як сайт'),
+  'the "still a website" accordion is gone once the app is installed');
+
 // ── Persistence round-trip ──
 console.log('\nPersistence');
 const dump = store.exportJSON();

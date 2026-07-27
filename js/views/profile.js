@@ -1,7 +1,7 @@
 import { h, card, btn, field, num, select, segmented, toast, confirmSheet, sheet, kg, stat } from '../ui.js';
 import { get, saveProfile, saveSettings, exportJSON, importJSON, resetAll, update } from '../store.js';
 import { ACTIVITY, bmr, tdee, calorieTarget, macroTargets, forecast } from '../lib/nutrition.js';
-import { APP_VERSION, checkForUpdate } from '../app.js';
+import { APP_VERSION, checkForUpdate, installDiagnostics } from '../app.js';
 
 export function profileView() {
   const d = get();
@@ -159,8 +159,35 @@ function aboutCard() {
     h('div', { class: 'row-gap' },
       btn('Перевірити оновлення', { variant: 'ghost', onClick: async () => { toast('Перевіряю...'); const found = await checkForUpdate(); if (!found) toast('Версія найновіша'); } }),
       btn('Як встановити', { variant: 'ghost', onClick: installSheet }),
+      btn('Чому не встановлюється?', { variant: 'ghost', onClick: diagnosticsSheet }),
     ),
   );
+}
+
+/**
+ * Installation has a lot of invisible preconditions (https, an active service
+ * worker, a browser that offers the prompt at all). When it silently does not
+ * work there is nothing to look at — this sheet is that "nothing" made visible.
+ */
+async function diagnosticsSheet() {
+  const d = await installDiagnostics();
+  const row = (label, ok, hint) => h('div', { class: 'diag-row' },
+    h('div', {}, h('div', {}, label), hint ? h('div', { class: 'note' }, hint) : null),
+    h('span', { class: ok ? 'diag-ok' : 'diag-no' }, ok ? '✓' : '✗'),
+  );
+
+  sheet('Чому не встановлюється', h('div', {},
+    d.standalone
+      ? h('p', { class: 'muted small' }, 'Застосунок уже запущено з головного екрана — встановлювати нічого не треба.')
+      : h('p', { class: 'muted small' }, 'Усе нижче має бути ✓, інакше браузер не запропонує встановлення.'),
+    row('Захищене з’єднання (https)', d.secure, d.secure ? null : 'Встановлення працює лише за https або на localhost.'),
+    row('Браузер підтримує офлайн-режим', d.serviceWorker),
+    row('Офлайн-режим уже активний', d.serviceWorkerActive, d.serviceWorkerActive ? null : 'Перезавантаж сторінку через кілька секунд.'),
+    row('Маніфест застосунку знайдено', d.manifest),
+    row('Браузер запропонував встановлення', d.promptReady || d.outcome === 'accepted',
+      d.ios ? 'iOS ніколи цього не пропонує — став через Safari → «Поділитися».' : 'У режимі інкогніто Chrome не пропонує встановлення.'),
+    h('p', { class: 'note' }, `Версія ${d.version}${d.outcome ? ` · остання спроба: ${d.outcome === 'accepted' ? 'встановлено' : 'скасовано'}` : ''}.`),
+  ), [{ label: 'Закрити', variant: 'ghost' }]);
 }
 
 function installSheet() {

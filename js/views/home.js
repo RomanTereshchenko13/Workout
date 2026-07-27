@@ -3,7 +3,7 @@ import { get, startSession, logWeight, today, logCardio } from '../store.js';
 import { buildSession, dayByRotation, waveOf, CARDIO, WEEK_TEMPLATE } from '../data/program.js';
 import { describeLoad, shortLoad } from '../lib/plates.js';
 import { macroTargets, calorieTarget, changeOverDays, weightTrend, forecast, sessionKcal } from '../lib/nutrition.js';
-import { go, isStandalone, canPromptInstall, promptInstall, isIOS } from '../app.js';
+import { go, installState, promptInstall, isIOS } from '../app.js';
 
 export function homeView() {
   const d = get();
@@ -36,9 +36,22 @@ export function homeView() {
  * in its ⋮ menu, so without this card the PWA reads as an ordinary website.
  */
 function installCard() {
-  if (isStandalone()) return null;
+  const state = installState();
+  if (state === 'standalone') return null;
 
-  if (canPromptInstall()) {
+  if (state === 'installed') {
+    // The tab that triggered the install keeps running as a tab, so this is the
+    // only signal that the app is now on the home screen. Anything else here
+    // would be telling the user to install what they just installed.
+    return card({ class: 'card-accent' },
+      h('div', { class: 'eyebrow' }, 'Встановлення'),
+      h('h3', {}, 'Встановлено ✓'),
+      h('p', { class: 'muted small' }, 'Значок «Home Workout» уже серед застосунків. Відкривай звідти — буде повний екран і офлайн.'),
+      h('p', { class: 'note' }, 'Ця вкладка так і лишається вкладкою браузера — її можна закрити.'),
+    );
+  }
+
+  if (state === 'ready') {
     return card({ class: 'card-accent' },
       h('div', { class: 'row-between' },
         h('div', {},
@@ -51,7 +64,10 @@ function installCard() {
           onClick: async () => {
             const outcome = await promptInstall();
             if (outcome === 'accepted') toast('Готово — шукай значок серед застосунків');
-            else if (outcome === 'dismissed') toast('Скасовано. Кнопка лишиться тут');
+            else if (outcome === 'pending') return; // already asking, the dialog is open
+            // The prompt event is spent after one use, so the button is gone
+            // either way — the instructions take its place in the same spot.
+            else if (outcome === 'dismissed') toast('Скасовано. Лишив інструкцію, якщо передумаєш');
             else toast('Браузер не пропонує встановлення — див. інструкцію', 'warn');
           },
         }),

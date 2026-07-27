@@ -6,6 +6,7 @@ It plans the sessions, tells you exactly which plates to screw onto the bars, tr
 
 - **[FEATURES.md](FEATURES.md)** — what the app does, screen by screen, plus the roadmap.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — how it is put together and how to extend it.
+- **[CHANGELOG.md](CHANGELOG.md)** — what changed in each version, and the rule for picking the next version number.
 
 ---
 
@@ -58,7 +59,9 @@ Pushing to `main` (or `master`) deploys automatically via `.github/workflows/dep
 
 **How updates reach the phone.** Each deploy stamps a unique build id into `sw.js` and `index.html`, which changes the service worker's cache name. On the next launch — or when the app returns from the background — it notices the new version, downloads it, and shows an «Оновити» banner. Tapping it activates the new worker and reloads. Nothing is ever silently swapped out mid-workout.
 
-The workflow fails the deploy if a `__BUILD__` placeholder was left unstamped or if a source file is missing from the service worker's asset list, so a broken offline build cannot ship.
+The workflow runs `npm run check` before publishing — asset manifest, version consistency, the logic suite and a headless render of every screen — and fails the deploy if a `__BUILD__` placeholder was left unstamped. A broken offline build, or a screen that crashes on render, cannot ship.
+
+**Versioning.** The build id changes on every deploy; `APP_VERSION` changes when a human decides a release is worth a number. [CHANGELOG.md](CHANGELOG.md) has the table for choosing the bump and the release checklist. `package.json`, `APP_VERSION` and the changelog must agree — `check-assets.mjs` fails the build if they drift.
 
 ---
 
@@ -104,7 +107,7 @@ scripts/
   make-icons.mjs           generates PNG icons from code
   smoke-test.mjs           pure-logic tests (plates, program, nutrition)
   render-test.mjs          headless DOM render tests for every screen
-  check-assets.mjs         guards the offline asset manifest
+  check-assets.mjs         offline asset manifest, single entry module, version consistency
 ```
 
 ---
@@ -112,12 +115,13 @@ scripts/
 ## Tests
 
 ```bash
+npm run check                   # all three, in the order CI runs them
 node scripts/smoke-test.mjs     # ~1050 assertions on the logic layer
 node scripts/render-test.mjs    # builds every screen against a stubbed DOM
-node scripts/check-assets.mjs   # every source file is cached for offline use
+node scripts/check-assets.mjs   # offline cache, entry module, version consistency
 ```
 
-`smoke-test` covers the plate ladders, the progression rules, session generation across the whole 4-week wave, and the nutrition formulas. `render-test` imports the real view modules and renders each screen twice — empty and populated — catching broken imports and view crashes without a browser. Both run in CI on every deploy.
+`smoke-test` covers the plate ladders, the progression rules, session generation across the whole 4-week wave, and the nutrition formulas. `render-test` imports the real view modules and renders each screen twice — empty and populated — catching broken imports and view crashes without a browser; it also drives the segmented control and the whole install flow. All three run in CI on every deploy.
 
 ---
 

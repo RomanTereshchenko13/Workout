@@ -110,7 +110,9 @@ Data section: JSON export, import, and a full reset behind a confirmation — pl
 
 **Offline.** Everything works with no connection. Updates arrive from GitHub Pages when online, gated behind a banner you tap.
 
-**Installable.** Standalone display, maskable icons, app shortcuts to "start a workout", "weigh in" and the plate calculator.
+**Installable.** Standalone display, maskable icons, app shortcuts to "start a workout", "weigh in" and the plate calculator — each landing on the action it names, not merely on the screen that contains it.
+
+**Durable.** The app asks the browser to protect its storage once you have data worth protecting, and Профіль → Дані reports whether that was granted, how much space the data takes, and lets you ask again. `localStorage` is the first thing browsers evict under pressure; a backup you have to remember to take is not a defence on its own.
 
 **Accessible.** Bottom sheets are proper dialogs — labelled, focus-trapped, dismissible with Escape, and they hand focus back where it came from. Every icon-only button has a spoken name, charts carry a text summary, keyboard focus is visible, and pinch-zoom is never blocked.
 

@@ -1,5 +1,5 @@
-import { h, card, btn, field, num, select, segmented, toast, confirmSheet, sheet, stat } from '../ui.js';
-import { get, saveProfile, saveSettings, exportJSON, importJSON, resetAll, update, markBackedUp, backupStatus, clearSubstitutions, setSubstitution, today } from '../store.js';
+import { h, card, btn, field, num, select, segmented, toast, confirmSheet, sheet, stat, clear } from '../ui.js';
+import { get, saveProfile, saveSettings, exportJSON, importJSON, resetAll, update, markBackedUp, backupStatus, clearSubstitutions, setSubstitution, today, storageStatus, requestPersistence } from '../store.js';
 import { ACTIVITY, bmr, tdee, calorieTarget, macroTargets, forecast } from '../lib/nutrition.js';
 import { EXERCISES } from '../data/exercises.js';
 import { APP_VERSION, checkForUpdate, installDiagnostics } from '../app.js';
@@ -140,6 +140,7 @@ function dataCard(d) {
       b.never
         ? `Бекапу ще не було. У пам’яті: ${d.logs.length} тренувань, ${d.weights.length} замірів ваги.`
         : `Останній бекап: ${b.days === 0 ? 'сьогодні' : `${b.days} дн. тому`}${b.unsaved ? `, після нього ${b.unsaved} нових тренувань` : ''}.`),
+    storageCard(),
     h('div', { class: 'row-gap' },
       btn('Експорт у файл', { variant: b.due ? 'primary' : 'ghost', onClick: doExport }),
       btn('Імпорт з файлу', { variant: 'ghost', onClick: doImport }),
@@ -154,6 +155,51 @@ function dataCard(d) {
       }, 'Стерти все'),
     }),
   );
+}
+
+/**
+ * Whether the browser has promised to keep the data, and how much there is.
+ *
+ * Eviction is the failure mode nothing else in the app defends against: a
+ * backup reminder helps only if you act on it, and `localStorage` is the first
+ * thing dropped under storage pressure. Asking for persistence costs nothing and
+ * moves the origin out of the "clear me first" bucket — but it is invisible, so
+ * this makes it visible and offers the ask when it has not been granted.
+ */
+function storageCard() {
+  const line = h('p', { class: 'note' }, 'Перевіряю сховище…');
+  const actions = h('div', {});
+  const wrap = h('div', { class: 'storage-row' }, line, actions);
+
+  const kb = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} МБ` : `${Math.max(1, Math.round(bytes / 1024))} КБ`);
+
+  const paint = (s) => {
+    clear(actions);
+    if (!s.supported) {
+      line.textContent = `Дані займають ${kb(s.dataBytes)}. Цей браузер не вміє захищати сховище від очищення — роби бекап регулярно.`;
+      return;
+    }
+    if (s.persisted) {
+      line.textContent = `Сховище захищене ✓ — браузер не видалить дані сам. Займають ${kb(s.dataBytes)}${s.quota ? ` з ${kb(s.quota)}` : ''}.`;
+      return;
+    }
+    line.textContent = `Сховище не захищене: браузер може видалити дані, якщо йому забракне місця. Займають ${kb(s.dataBytes)}.`;
+    actions.appendChild(btn('Захистити дані', {
+      variant: 'primary',
+      onClick: async () => {
+        // A click is the context Firefox needs to show its prompt at all.
+        const granted = await requestPersistence();
+        if (granted) toast('Готово — браузер більше не видалить дані сам');
+        else toast('Браузер відмовив. Найнадійніше — бекап у файл', 'warn');
+        storageStatus().then(paint);
+      },
+    }));
+  };
+
+  storageStatus().then(paint).catch(() => {
+    line.textContent = 'Не вдалося перевірити стан сховища.';
+  });
+  return wrap;
 }
 
 function doExport() {

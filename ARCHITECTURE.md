@@ -58,6 +58,8 @@ A single object in `localStorage` under one key, with a `SCHEMA` version. Every 
 
 A migration describes history, so it should not read live constants: the v4 `perSide` backfill carries a frozen copy of the unilateral slot list, because if the program later drops one of those exercises, workouts logged back then were still done per side.
 
+`requestPersistence()` asks the browser not to evict the origin. It is called only when there is data worth protecting, because Firefox turns it into a permission prompt and prompting someone about data they have not created yet trains them to say no. `storageStatus()` backs the readout in Профіль → Дані. Neither is a substitute for the export — they reduce the chance of needing it.
+
 Mutations go through `update(fn)`, which persists and notifies. Domain helpers (`logWeight`, `startSession`, `finishSession`, …) are the intended API; reach for raw `update()` only for genuinely new concepts. `writeError()` reports whether the last write actually reached storage — a full quota must never be reported to the user as a saved workout.
 
 Shape:

@@ -49,6 +49,51 @@ deploy needs a new version.
 
 ---
 
+## 1.4.0
+
+Hardening pass: protect the data that already exists, and make the app
+shortcuts do what they are named after.
+
+MINOR rather than PATCH, against my first instinct — the table lists "a new
+diagnostic" as MINOR, and the storage card is exactly that, with an action
+button attached. The rest of the release is PATCH-level, and mixed releases take
+the highest level.
+
+### Added
+
+- **Storage protection.** Nothing in the app had ever called
+  `navigator.storage.persist()`. Everything lives in `localStorage`, which is the
+  first thing a browser evicts under storage pressure and which iOS clears for a
+  non-installed site after about a week of disuse — so the entire training
+  history could vanish with no warning and no defence beyond a backup reminder
+  the user has to act on. The app now asks for persistence once there is
+  something worth protecting (after onboarding, and on launch for an onboarded
+  profile), never before — nobody should get a permission prompt about data they
+  have not created yet. Профіль → Дані shows whether it was granted, how much
+  space the data occupies, and offers the ask again if it was not.
+- **The weigh-in shortcut weighs you in.** A new `#/weigh` hash command opens
+  the weigh-in sheet directly. Hash commands rewrite the URL before running, so
+  Back does not re-fire them and a reload does not repeat them.
+
+### Fixed
+
+- **«Почати тренування» led to a dead end.** The app shortcut pointed at
+  `#/session`, which with no workout running rendered "there is no active
+  workout — start one from the home screen". Tapping "start a workout" and being
+  told to go and start a workout somewhere else is the whole bug. That screen now
+  shows the planned day and starts it. It does *not* auto-start on arrival: a
+  mis-tapped shortcut should not silently create a workout.
+- **Touch targets were below 44px.** `.icon-btn` was a 30px circle and
+  `.link-btn` was roughly 26×22px. 1.3.0 made this worse by putting ✎ next to ✕
+  on every history card, where a mis-tap costs a deleted workout. Both are now at
+  least 44px with real spacing between them. Sized rather than expanded with an
+  invisible pseudo-element, because overlapping hit areas next to a delete button
+  are worse than a small target.
+- `.round-chip`, `.rest-btn` and the set toggles in the workout editor were also
+  a few pixels short of 44.
+
+---
+
 ## 1.3.0
 
 Two new capabilities plus the fix for a progression bug that had been quietly

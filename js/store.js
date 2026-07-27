@@ -394,6 +394,60 @@ export function updateLog(id, mutator) {
   });
 }
 
+/* ─────────────── Storage durability ─────────────── */
+
+/**
+ * Ask the browser not to evict this origin's data.
+ *
+ * `localStorage` is the first thing browsers drop under storage pressure, and
+ * iOS clears it for a non-installed site after about a week of disuse. Every
+ * workout, weigh-in and setting lives there, so eviction is total data loss —
+ * and until now nothing in the app ever asked for protection against it.
+ *
+ * Chrome grants this silently for an installed PWA with real engagement.
+ * Firefox asks once, which is why the caller only requests it when there is
+ * something worth protecting: nobody should get a permission prompt about data
+ * they have not created yet.
+ *
+ * @returns {Promise<boolean|null>} null when the browser has no such concept
+ */
+export async function requestPersistence() {
+  if (typeof navigator === 'undefined' || !navigator.storage?.persist) return null;
+  try {
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return null;
+  }
+}
+
+/** Bytes our own blob occupies. Exact, unlike a UTF-16 character count. */
+function dataSize() {
+  const json = JSON.stringify(data);
+  return typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(json).length : json.length;
+}
+
+/**
+ * Durability and headroom, for the Дані card.
+ * @returns {Promise<{persisted:boolean|null, usage:number|null, quota:number|null, dataBytes:number, supported:boolean}>}
+ */
+export async function storageStatus() {
+  const out = { persisted: null, usage: null, quota: null, dataBytes: dataSize(), supported: false };
+  if (typeof navigator === 'undefined' || !navigator.storage) return out;
+  out.supported = typeof navigator.storage.persist === 'function';
+  try {
+    if (navigator.storage.persisted) out.persisted = await navigator.storage.persisted();
+    if (navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      out.usage = est.usage ?? null;
+      out.quota = est.quota ?? null;
+    }
+  } catch {
+    /* the readout is informational — a browser that refuses to answer is not an error */
+  }
+  return out;
+}
+
 /* ─────────────── Backup ─────────────── */
 
 export function exportJSON() {

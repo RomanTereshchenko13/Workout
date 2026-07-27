@@ -114,11 +114,22 @@ ul, ol { margin: 0 0 8px; padding-left: 18px; }
 .btn-block { width: 100%; margin-top: 10px; }
 .btn:disabled { opacity: 0.45; }
 
+/*
+  Touch targets. These were 30px circles and ~26×22px glyph buttons — under the
+  44px minimum, and ✎ sits next to ✕ on every history card, where a mis-tap
+  costs a deleted workout. Sized rather than expanded with a pseudo-element on
+  purpose: overlapping invisible hit areas next to a delete button is worse than
+  a small one.
+*/
 .icon-btn {
-  width: 30px; height: 30px; flex: 0 0 30px; border-radius: 50%; border: 1px solid var(--line);
-  background: var(--card-2); color: var(--muted); font-size: 0.8rem; font-style: italic; font-weight: 700; cursor: pointer;
+  width: 40px; height: 40px; flex: 0 0 40px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--card-2); color: var(--muted); font-size: 0.85rem; font-style: italic; font-weight: 700; cursor: pointer;
 }
-.link-btn { background: none; border: 0; color: var(--muted); font-size: 0.9rem; cursor: pointer; padding: 4px 6px; }
+.link-btn {
+  background: none; border: 0; color: var(--muted); font-size: 0.9rem; cursor: pointer;
+  min-width: 44px; min-height: 44px; padding: 4px 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
 
 /* ─────────── Form controls ─────────── */
 
@@ -256,7 +267,7 @@ textarea.input { resize: vertical; }
 .ex-card.is-done { border-color: rgba(61,220,132,0.32); }
 .ex-head { align-items: flex-start; margin-bottom: 10px; }
 .ex-card h3 { margin: 0 0 2px; }
-.ex-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.ex-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 
 /* Supersets: two exercises performed back to back, rest only after the pair. */
 .superset {
@@ -275,7 +286,7 @@ textarea.input { resize: vertical; }
 .finisher-count.is-done { color: var(--warn); }
 .round-chips { display: flex; gap: 6px; margin: 10px 0 0; }
 .round-chip {
-  flex: 1; min-height: 42px; border-radius: var(--radius-sm); border: 1px solid var(--line);
+  flex: 1; min-height: 44px; border-radius: var(--radius-sm); border: 1px solid var(--line);
   background: var(--bg-2); color: var(--muted); font-size: 0.95rem; font-weight: 700;
   font-family: inherit; cursor: pointer;
 }
@@ -330,6 +341,10 @@ textarea.input { resize: vertical; }
 .diag-ok { color: var(--good); font-weight: 700; }
 .diag-no { color: var(--bad); font-weight: 700; }
 
+/* Storage durability readout — the ask only appears when it was not granted. */
+.storage-row { margin-top: 4px; }
+.storage-row .btn { margin-top: 8px; }
+
 /* ─────────── Rest timer ─────────── */
 
 .rest-bar {
@@ -349,7 +364,7 @@ textarea.input { resize: vertical; }
 .rest-label { flex: 1; font-size: 0.76rem; color: var(--muted); }
 .rest-actions { display: flex; gap: 6px; }
 .rest-btn {
-  min-width: 44px; height: 40px; border-radius: 9px; border: 1px solid var(--line);
+  min-width: 44px; height: 44px; border-radius: 9px; border: 1px solid var(--line);
   background: var(--card); color: var(--text); font-size: 0.85rem; font-weight: 600; cursor: pointer;
 }
 
@@ -415,7 +430,7 @@ textarea.input { resize: vertical; }
 
 .hist-card { border-left: 3px solid var(--day-color); }
 .hist-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 0.76rem; color: var(--muted); margin: 8px 0; font-variant-numeric: tabular-nums; }
-.hist-actions { display: flex; gap: 2px; flex: 0 0 auto; }
+.hist-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .tag-hot { color: var(--warn); }
 
 /* Editing a finished workout */
@@ -428,7 +443,7 @@ textarea.input { resize: vertical; }
 .edit-set-field .input { padding: 8px 10px; text-align: center; font-variant-numeric: tabular-nums; }
 .edit-set-unit { font-size: 0.72rem; color: var(--muted); min-width: 30px; }
 .set-toggle {
-  width: 38px; height: 38px; flex: 0 0 38px; border-radius: var(--radius-sm);
+  width: 44px; height: 44px; flex: 0 0 44px; border-radius: var(--radius-sm);
   border: 1px solid var(--line); background: var(--card); color: var(--muted);
   font-size: 0.85rem; font-weight: 700; font-family: inherit; cursor: pointer;
 }

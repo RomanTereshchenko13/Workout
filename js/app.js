@@ -1,11 +1,11 @@
 /** App shell: router, tab bar, onboarding, service-worker update flow. */
 
 import { h, clear, btn, field, num, select, segmented, toast, card, mmss } from './ui.js';
-import { get, subscribe, subscribeExternal, saveProfile } from './store.js';
+import { get, subscribe, subscribeExternal, saveProfile, requestPersistence } from './store.js';
 import { primeAudio, keepAwake } from './lib/timer.js';
 import { ACTIVITY } from './lib/nutrition.js';
 
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 
 const ROUTES = {
   '#/': { label: 'Головна', icon: '🏋', load: () => import('./views/home.js').then((m) => m.homeView) },
@@ -225,6 +225,9 @@ function onboarding() {
             onboarded: true,
           });
           primeAudio();
+          // Inside the click that created the data, which is the only context
+          // where Firefox's permission prompt makes sense to the user.
+          requestPersistence();
           toast('Готово — почнемо з Дня A');
           go('#/');
         },
@@ -409,9 +412,41 @@ export async function checkForUpdate() {
   return false;
 }
 
+/* ─────────────── Hash commands ─────────────── */
+
+/**
+ * Entry points that *do* something rather than name a screen.
+ *
+ * They exist for the manifest shortcuts, which promise actions. «Зважитись»
+ * pointed at #/progress, which merely showed the chart — the shortcut was one
+ * tap short of the thing it was named after.
+ *
+ * A command rewrites the hash before running, so Back does not re-fire it and a
+ * reload does not repeat it.
+ */
+const COMMANDS = {
+  '#/weigh': async () => {
+    const { weighSheet } = await import('./views/home.js');
+    weighSheet(get().profile);
+  },
+};
+
+function takeCommand() {
+  const run = COMMANDS[location.hash];
+  if (!run) return false;
+  history.replaceState(null, '', `${location.pathname}${location.search}#/`);
+  // Render first so the sheet opens over a real screen rather than a blank one.
+  render().then(run);
+  return true;
+}
+
+function onHashChange() {
+  if (!takeCommand()) render();
+}
+
 /* ─────────────── Bootstrap ─────────────── */
 
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', onHashChange);
 window.addEventListener('app:render', render);
 subscribe(() => {
   // Only the tab bar repaints here; full re-renders are explicit so typing is never interrupted.
@@ -425,5 +460,9 @@ subscribeExternal(() => {
 });
 document.addEventListener('click', primeAudio, { once: true });
 
-render();
+if (!takeCommand()) render();
 registerSW();
+
+// Only once there is something to lose: an onboarded profile is already real
+// data the user would not want silently evicted.
+if (get().profile.onboarded) requestPersistence();

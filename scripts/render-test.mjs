@@ -9,6 +9,8 @@
  * SCREENS when you add a view.
  */
 
+import { readFileSync } from 'node:fs';
+
 /* ─────────── Minimal DOM ─────────── */
 
 let nodesCreated = 0;
@@ -135,7 +137,9 @@ globalThis.window = {
   AudioContext: undefined,
 };
 globalThis.requestAnimationFrame = globalThis.window.requestAnimationFrame;
-globalThis.location = { hash: '#/', href: 'http://localhost/', reload() {}, origin: 'http://localhost' };
+globalThis.location = { hash: '#/', href: 'http://localhost/', reload() {}, origin: 'http://localhost', pathname: '/', search: '' };
+// Hash commands rewrite the URL so Back cannot re-fire them.
+globalThis.history = { replaceState(_s, _t, url) { globalThis.location.hash = String(url).slice(String(url).indexOf('#')); } };
 // Node 24 exposes navigator as a getter-only global — patch the vibrate hook onto it.
 Object.defineProperty(globalThis, 'navigator', {
   value: { vibrate: () => true, userAgent: 'node' },
@@ -222,9 +226,14 @@ store.saveProfile({
 for (const name of Object.keys(views).filter((n) => n !== 'session')) {
   await renderScreen(`${name} (empty)`, views[name]);
 }
-const idleSession = walk(views.session());
-ok(idleSession.text.join(' ').includes('Активного тренування немає'), 'session view shows an empty state when nothing is running');
-ok(idleSession.buttons >= 1, 'the empty session state offers a way back home');
+// With nothing running this screen is where the «Почати тренування» app shortcut
+// lands, so it has to offer the workout rather than send the user elsewhere.
+const idleNode = views.session();
+const idleSession = walk(idleNode);
+ok(idleSession.text.join(' ').includes('Почати тренування'), 'the idle session screen offers to start the planned day');
+ok(/День [ABC]/.test(idleSession.text.join(' ')), 'and names which day is next', idleSession.text.join(' ').slice(0, 60));
+ok(idleSession.buttons >= 2, 'with a way back home alongside it');
+ok(store.get().active === null, 'showing the screen does not start a workout on its own');
 
 // ── Populated state: weigh-ins, a finished workout and cardio ──
 console.log('\nScreens with data');
@@ -693,6 +702,73 @@ ok(post.exercises.every((e) => e.mode === 'bw' || Number.isFinite(e.suggested.kg
 
 store.updateLog('no-such-log', () => { throw new Error('must not run'); });
 ok(true, 'updating a missing log is a no-op rather than a throw');
+
+// ── Storage durability ──
+// Eviction is the one failure mode nothing else defends against: localStorage is
+// the first thing browsers drop under pressure, and iOS clears it for a
+// non-installed site after about a week of disuse.
+console.log('\nStorage durability');
+
+// This stub's navigator has no `storage` at all — the Safari-shaped case.
+const noApi = await store.storageStatus();
+ok(noApi.supported === false, 'a browser without the API reports unsupported');
+ok(noApi.persisted === null, 'and makes no claim about persistence');
+ok(noApi.dataBytes > 0, 'the size of our own data is still measured', String(noApi.dataBytes));
+ok((await store.requestPersistence()) === null, 'requesting persistence without the API is null, not a throw');
+
+let persistCalls = 0;
+let granted = false;
+navigator.storage = {
+  persisted: async () => granted,
+  persist: async () => { persistCalls++; return granted; },
+  estimate: async () => ({ usage: 4096, quota: 50 * 1024 * 1024 }),
+};
+
+const denied = await store.requestPersistence();
+ok(denied === false && persistCalls === 1, 'a browser that refuses reports false');
+const refused = await store.storageStatus();
+ok(refused.persisted === false, 'and the status says so, so the UI can offer the ask');
+ok(refused.quota === 50 * 1024 * 1024 && refused.usage === 4096, 'headroom is reported when the browser will say');
+
+granted = true;
+ok((await store.requestPersistence()) === true, 'a browser that grants it reports true');
+ok(persistCalls === 1, 'already-persisted storage is never re-requested', String(persistCalls));
+ok((await store.storageStatus()).persisted === true, 'the status reflects the grant');
+
+navigator.storage = {
+  persisted: async () => { throw new Error('blocked'); },
+  persist: async () => { throw new Error('blocked'); },
+};
+ok((await store.requestPersistence()) === null, 'a browser that throws is handled, not propagated');
+const brokenStatus = await store.storageStatus();
+ok(brokenStatus.dataBytes > 0 && brokenStatus.persisted === null, 'and the status degrades instead of failing');
+delete navigator.storage;
+
+// ── Manifest shortcuts do what they promise ──
+// «Зважитись» pointed at #/progress, which merely showed the chart — one tap
+// short of the action it was named after.
+console.log('\nApp shortcuts');
+const shortcuts = JSON.parse(readFileSync(new URL('../manifest.webmanifest', import.meta.url), 'utf8')).shortcuts;
+ok(shortcuts.length >= 3, 'the manifest declares shortcuts', String(shortcuts.length));
+
+const weighShortcut = shortcuts.find((s) => s.url.includes('weigh'));
+ok(!!weighShortcut, 'there is a weigh-in shortcut pointing at a command');
+
+const sheetCount = () => document.body.children.filter((c) => c.classList?.contains?.('sheet-wrap')).length;
+const sheetsBefore = sheetCount();
+globalThis.location.hash = weighShortcut.url.slice(weighShortcut.url.indexOf('#'));
+(winListeners.hashchange || []).forEach((fn) => fn());
+await new Promise((r) => setTimeout(r, 0));
+ok(sheetCount() > sheetsBefore, 'the weigh-in shortcut opens the weigh-in sheet');
+const weighPanel = document.body.children.filter((c) => c.classList?.contains?.('sheet-wrap')).pop().children[0];
+ok(walk(weighPanel).text.join(' ').includes('Зважування'), 'and it is the weigh-in sheet, not some other screen');
+ok(globalThis.location.hash === '#/', 'the command rewrites the hash so Back cannot re-fire it', globalThis.location.hash);
+
+for (const s of shortcuts) {
+  const hash = s.url.slice(s.url.indexOf('#'));
+  ok(hash === '#/weigh' || ['#/', '#/session', '#/progress', '#/library', '#/tools', '#/profile'].includes(hash),
+    `shortcut "${s.name}" points somewhere real`, hash);
+}
 
 console.log(`\n${failed ? '✗' : '✓'} ${passed} checks passed, ${failed} failed (${nodesCreated} DOM nodes built)\n`);
 process.exit(failed ? 1 : 0);

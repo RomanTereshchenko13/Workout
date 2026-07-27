@@ -1,6 +1,6 @@
 import { h, card, btn, kg, mmss, sheet, toast, clear, confirmSheet, num, field, fmtDuration, accordion, replaceNode } from '../ui.js';
-import { get, updateActive, finishSession, discardSession, saveRest, setSubstitution, writeError } from '../store.js';
-import { dayByKey, waveOf, groupExercises, alternativesFor, suggestWeight } from '../data/program.js';
+import { get, updateActive, finishSession, discardSession, saveRest, setSubstitution, writeError, startSession } from '../store.js';
+import { dayByKey, waveOf, groupExercises, alternativesFor, suggestWeight, buildSession } from '../data/program.js';
 import { EXERCISES, WARMUP, COOLDOWN } from '../data/exercises.js';
 import { nearestLoad, nextLoadUp, nextLoadDown, describeLoad, shortLoad, liftedPerRep, totalVolume } from '../lib/plates.js';
 import { restTimer, keepAwake, primeAudio, vibrate } from '../lib/timer.js';
@@ -30,9 +30,39 @@ export function sessionView() {
   if (!a) {
     refs = null;
     stopClock();
+    // The «Почати тренування» app shortcut lands here. Telling someone who just
+    // tapped "start a workout" to go and start one somewhere else made the
+    // shortcut a dead end, so this screen starts the planned day itself.
+    const plan = buildSession({
+      rotation: d.state.rotation,
+      week: d.state.week,
+      history: d.logs,
+      inventory: d.inventory,
+      experience: d.profile.experience,
+      substitutions: d.substitutions,
+    });
     return h('div', { class: 'view' },
-      card({}, h('h3', {}, 'Активного тренування немає'), h('p', { class: 'muted' }, 'Почни його з головного екрана.'),
-        btn('На головну', { variant: 'primary', class: 'btn-block', onClick: () => go('#/') })),
+      card({ class: 'card-hero', style: { '--day-color': plan.day.color } },
+        h('div', { class: 'hero-top' },
+          h('div', { class: 'day-chip' }, `День ${plan.day.key}`),
+          h('div', { class: 'wave-chip' }, plan.wave.label),
+        ),
+        h('h2', { class: 'hero-title' }, plan.day.title),
+        h('p', { class: 'muted' }, plan.day.focus),
+        h('div', { class: 'hero-meta' },
+          h('span', {}, `≈ ${plan.estMinutes} хв`),
+          h('span', {}, `${plan.exercises.length} вправ`),
+          plan.finisher ? h('span', {}, 'фінішер') : null,
+        ),
+        btn('Почати тренування', {
+          variant: 'primary', class: 'btn-block',
+          onClick: () => {
+            startSession(plan);
+            rerender();
+          },
+        }),
+        btn('На головну', { variant: 'ghost', class: 'btn-block', onClick: () => go('#/') }),
+      ),
     );
   }
 
